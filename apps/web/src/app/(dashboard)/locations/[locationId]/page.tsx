@@ -567,12 +567,15 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
               <p className="mt-2 text-sm text-slate-400">
                 Create and schedule posts to keep your Google Business Profile active.
               </p>
-              <button className="mt-6 inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-emerald-950 transition hover:bg-emerald-400">
+              <Link
+                href={`/locations/${locationId}/posts/new`}
+                className="mt-6 inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-emerald-950 transition hover:bg-emerald-400"
+              >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
                 Create Post
-              </button>
+              </Link>
             </div>
           ) : (
             <ul className="space-y-4">
