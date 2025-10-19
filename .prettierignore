@@ -1,0 +1,6 @@
+.next
+out
+node_modules
+coverage
+apps/web/node_modules
+supabase/.temp
