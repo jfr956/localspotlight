@@ -9,7 +9,9 @@ export const metadata = {
 interface DashboardStats {
   totalLocations: number;
   totalReviews: number;
+  totalPosts: number;
   pendingSchedules: number;
+  unansweredQuestions: number;
   averageRating: number;
 }
 
@@ -21,6 +23,14 @@ type ScheduleWithLocation = Tables<"schedules"> & {
   gbp_locations?: { title: string | null };
 };
 
+type PostWithLocation = Tables<"gbp_posts"> & {
+  gbp_locations?: { title: string | null };
+};
+
+type QnaWithLocation = Tables<"gbp_qna"> & {
+  gbp_locations?: { title: string | null };
+};
+
 export default async function DashboardPage() {
   const supabase = await createServerComponentClientWithAuth();
   const db = supabase as unknown as { from: typeof supabase.from };
@@ -28,70 +38,93 @@ export default async function DashboardPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Fetch organizations for the current user
-  const organizationQuery = await supabase
-    .from("orgs")
-    .select("id, name, plan, created_at")
-    .order("created_at", { ascending: true })
-    .limit(5);
+  const userId = user?.id as
+    | Database["public"]["Tables"]["org_members"]["Row"]["user_id"]
+    | undefined;
 
   type OrgSummary = Pick<Tables<"orgs">, "id" | "name" | "plan" | "created_at">;
+  type OrgId = Database["public"]["Tables"]["gbp_locations"]["Row"]["org_id"];
+
+  const membershipQuery = userId
+    ? await supabase
+        .from("org_members")
+        .select("org_id")
+        .eq("user_id", userId)
+    : { data: [] as unknown[] };
+
+  const membershipOrgIds = ((membershipQuery.data as Array<{ org_id: OrgId | null }> | null) ?? [])
+    .map((membership) => membership.org_id)
+    .filter((orgId): orgId is OrgId => Boolean(orgId));
+
+  const organizationQuery = membershipOrgIds.length
+    ? await supabase
+        .from("orgs")
+        .select("id, name, plan, created_at")
+        .in("id", membershipOrgIds)
+        .order("created_at", { ascending: true })
+    : { data: [] as unknown[] };
 
   const orgs = (organizationQuery.data as OrgSummary[] | null) ?? [];
 
-  // Get user's org IDs to filter data
-  type OrgId = Database["public"]["Tables"]["gbp_locations"]["Row"]["org_id"];
-  const userOrgIds = orgs
-    .map((org) => org.id)
-    .filter((id): id is OrgId => Boolean(id)) as OrgId[];
+  const userOrgIds: OrgId[] = orgs.length
+    ? (orgs.map((org) => org.id).filter((id): id is OrgId => Boolean(id)) as OrgId[])
+    : membershipOrgIds;
 
-  // Initialize stats
   const stats: DashboardStats = {
     totalLocations: 0,
     totalReviews: 0,
+    totalPosts: 0,
     pendingSchedules: 0,
+    unansweredQuestions: 0,
     averageRating: 0,
   };
 
-  // Fetch recent reviews
-  let recentReviews: Array<
-    Tables<"gbp_reviews"> & { location?: Pick<Tables<"gbp_locations">, "title"> }
-  > = [];
+  type LocationPreview = Pick<Tables<"gbp_locations">, "title">;
 
-  // Fetch recent scheduled posts
-  let recentSchedules: Array<
-    Tables<"schedules"> & { location?: Pick<Tables<"gbp_locations">, "title"> }
-  > = [];
+  let recentReviews: Array<ReviewWithLocation & { location?: LocationPreview }> = [];
+  let recentSchedules: Array<ScheduleWithLocation & { location?: LocationPreview }> = [];
+  let recentPosts: Array<PostWithLocation & { location?: LocationPreview }> = [];
+  let recentQna: Array<QnaWithLocation & { location?: LocationPreview }> = [];
 
   if (userOrgIds.length > 0) {
-    // Fetch dashboard statistics
-    const [locationsResult, reviewsResult, schedulesResult, recentReviewsResult, recentSchedulesResult] =
-      await Promise.all([
-        // Total locations count
-        db
-          .from("gbp_locations")
-          .select("id", { count: "exact", head: true })
-          .in("org_id", userOrgIds),
-
-        // Total reviews count and average rating
-        db
-          .from("gbp_reviews")
-          .select("rating")
-          .in("org_id", userOrgIds)
-          .not("rating", "is", null),
-
-        // Pending schedules count
-        db
-          .from("schedules")
-          .select("id", { count: "exact", head: true })
-          .in("org_id", userOrgIds)
-          .filter("status", "eq", "pending"),
-
-        // Recent reviews with location info
-        db
-          .from("gbp_reviews")
-          .select(
-            `
+    const [
+      locationsResult,
+      reviewsResult,
+      schedulesResult,
+      postsResult,
+      unansweredQnaResult,
+      recentReviewsResult,
+      recentSchedulesResult,
+      recentPostsResult,
+      recentQnaResult,
+    ] = await Promise.all([
+      db
+        .from("gbp_locations")
+        .select("id", { count: "exact", head: true })
+        .in("org_id", userOrgIds),
+      db
+        .from("gbp_reviews")
+        .select("rating", { count: "exact" })
+        .in("org_id", userOrgIds)
+        .not("rating", "is", null),
+      db
+        .from("schedules")
+        .select("id", { count: "exact", head: true })
+        .in("org_id", userOrgIds)
+        .filter("status", "eq", "pending"),
+      db
+        .from("gbp_posts")
+        .select("id", { count: "exact", head: true })
+        .in("org_id", userOrgIds),
+      db
+        .from("gbp_qna")
+        .select("id", { count: "exact", head: true })
+        .in("org_id", userOrgIds)
+        .is("answer", null),
+      db
+        .from("gbp_reviews")
+        .select(
+          `
             id,
             author,
             rating,
@@ -105,16 +138,14 @@ export default async function DashboardPage() {
             updated_at,
             gbp_locations!inner(title)
           `
-          )
-          .in("org_id", userOrgIds)
-          .order("created_at", { ascending: false })
-          .limit(5),
-
-        // Recent scheduled posts with location info
-        db
-          .from("schedules")
-          .select(
-            `
+        )
+        .in("org_id", userOrgIds)
+        .order("created_at", { ascending: false })
+        .limit(5),
+      db
+        .from("schedules")
+        .select(
+          `
             id,
             publish_at,
             status,
@@ -127,21 +158,59 @@ export default async function DashboardPage() {
             updated_at,
             gbp_locations!inner(title)
           `
-          )
-          .in("org_id", userOrgIds)
-          .order("publish_at", { ascending: false })
-          .limit(5),
-      ]);
+        )
+        .in("org_id", userOrgIds)
+        .order("publish_at", { ascending: false })
+        .limit(5),
+      db
+        .from("gbp_posts")
+        .select(
+          `
+            id,
+            summary,
+            topic_type,
+            call_to_action_type,
+            call_to_action_url,
+            state,
+            google_create_time,
+            created_at,
+            location_id,
+            org_id,
+            gbp_locations!inner(title)
+          `
+        )
+        .in("org_id", userOrgIds)
+        .order("google_create_time", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(5),
+      db
+        .from("gbp_qna")
+        .select(
+          `
+            id,
+            question,
+            answer,
+            state,
+            created_at,
+            location_id,
+            org_id,
+            gbp_locations!inner(title)
+          `
+        )
+        .in("org_id", userOrgIds)
+        .order("created_at", { ascending: false })
+        .limit(5),
+    ]);
 
-    // Calculate statistics
     const reviewRows =
       (reviewsResult.data as Array<Pick<Tables<"gbp_reviews">, "rating">> | null) ?? [];
 
     stats.totalLocations = locationsResult.count ?? 0;
-    stats.totalReviews = reviewRows.length;
+    stats.totalReviews = reviewsResult.count ?? reviewRows.length;
+    stats.totalPosts = postsResult.count ?? 0;
     stats.pendingSchedules = schedulesResult.count ?? 0;
+    stats.unansweredQuestions = unansweredQnaResult.count ?? 0;
 
-    // Calculate average rating
     if (reviewRows.length > 0) {
       const validRatings = reviewRows.filter((r) => r.rating !== null);
       if (validRatings.length > 0) {
@@ -150,7 +219,6 @@ export default async function DashboardPage() {
       }
     }
 
-    // Process recent reviews with proper typing
     if (recentReviewsResult.data) {
       recentReviews = (recentReviewsResult.data as ReviewWithLocation[]).map((review) => ({
         ...review,
@@ -158,11 +226,24 @@ export default async function DashboardPage() {
       }));
     }
 
-    // Process recent schedules with proper typing
     if (recentSchedulesResult.data) {
       recentSchedules = (recentSchedulesResult.data as ScheduleWithLocation[]).map((schedule) => ({
         ...schedule,
         location: schedule.gbp_locations ? { title: schedule.gbp_locations.title } : undefined,
+      }));
+    }
+
+    if (recentPostsResult.data) {
+      recentPosts = (recentPostsResult.data as PostWithLocation[]).map((post) => ({
+        ...post,
+        location: post.gbp_locations ? { title: post.gbp_locations.title } : undefined,
+      }));
+    }
+
+    if (recentQnaResult.data) {
+      recentQna = (recentQnaResult.data as QnaWithLocation[]).map((entry) => ({
+        ...entry,
+        location: entry.gbp_locations ? { title: entry.gbp_locations.title } : undefined,
       }));
     }
   }
@@ -195,7 +276,7 @@ export default async function DashboardPage() {
 
       {/* Stats Grid */}
       {userOrgIds.length > 0 && (
-        <section className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        <section className="grid gap-6 sm:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-slate-400">Total Locations</h3>
@@ -249,6 +330,38 @@ export default async function DashboardPage() {
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-slate-400">Google Posts</h3>
+              <svg
+                className="h-5 w-5 text-slate-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M17 8h2a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2v-9a2 2 0 012-2h2"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 12v9m-3-3h6"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 6l-3 3-3-3"
+                />
+              </svg>
+            </div>
+            <p className="mt-3 text-3xl font-semibold text-white">{stats.totalPosts}</p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+            <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-slate-400">Pending Posts</h3>
               <svg
                 className="h-5 w-5 text-slate-500"
@@ -269,7 +382,7 @@ export default async function DashboardPage() {
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-slate-400">Organizations</h3>
+              <h3 className="text-sm font-medium text-slate-400">Unanswered Q&amp;A</h3>
               <svg
                 className="h-5 w-5 text-slate-500"
                 fill="none"
@@ -280,11 +393,11 @@ export default async function DashboardPage() {
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeWidth={2}
-                  d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
+                  d="M8 10h.01M12 10h.01M16 10h.01M9 16h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                 />
               </svg>
             </div>
-            <p className="mt-3 text-3xl font-semibold text-white">{orgs.length}</p>
+            <p className="mt-3 text-3xl font-semibold text-white">{stats.unansweredQuestions}</p>
           </div>
         </section>
       )}
@@ -328,7 +441,7 @@ export default async function DashboardPage() {
 
       {/* Recent Activity Grid */}
       {userOrgIds.length > 0 && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 xl:grid-cols-2">
           {/* Recent Reviews */}
           <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between">
@@ -405,7 +518,10 @@ export default async function DashboardPage() {
           {/* Recent Scheduled Posts */}
           <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">Scheduled Posts</h2>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Scheduled Posts</h2>
+                <p className="text-xs text-slate-400">Pending publish: {stats.pendingSchedules}</p>
+              </div>
               <Link href="/content" className="text-sm text-emerald-400 hover:text-emerald-300">
                 View all
               </Link>
@@ -453,6 +569,139 @@ export default async function DashboardPage() {
                           })}
                         </p>
                       </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* Recent Google Posts */}
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-white">Recent Google Posts</h2>
+              <Link href="/locations" className="text-sm text-emerald-400 hover:text-emerald-300">
+                Manage locations
+              </Link>
+            </div>
+            {recentPosts.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-400">
+                No posts yet. Sync your Google Business Profile or publish from LocalSpotlight to
+                see recent posts here.
+              </p>
+            ) : (
+              <ul className="mt-4 space-y-4">
+                {recentPosts.map((post) => (
+                  <li key={post.id} className="rounded-lg border border-slate-800 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-white capitalize">
+                            {post.topic_type?.replace("_", " ") ?? "Post"}
+                          </span>
+                          {post.state && (
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs uppercase tracking-wide ${
+                                post.state === "LIVE"
+                                  ? "bg-emerald-500/10 text-emerald-400"
+                                  : post.state === "REJECTED"
+                                    ? "bg-red-500/10 text-red-400"
+                                    : "bg-slate-500/10 text-slate-400"
+                              }`}
+                            >
+                              {post.state}
+                            </span>
+                          )}
+                        </div>
+                        {post.location && (
+                          <p className="mt-1 text-xs text-slate-500">{post.location.title}</p>
+                        )}
+                        {post.summary && (
+                          <p className="mt-2 text-sm text-slate-300 line-clamp-2">{post.summary}</p>
+                        )}
+                        {post.call_to_action_type && (
+                          <p className="mt-2 text-xs text-slate-400">
+                            CTA: {post.call_to_action_type.replace("_", " ")}
+                            {post.call_to_action_url ? (
+                              <>
+                                {" "}
+                                <a
+                                  href={post.call_to_action_url}
+                                  className="text-emerald-400 hover:text-emerald-300"
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {post.call_to_action_url}
+                                </a>
+                              </>
+                            ) : null}
+                          </p>
+                        )}
+                      </div>
+                      {(post.google_create_time ?? post.created_at) && (
+                        <p className="text-xs text-slate-500">
+                          {new Date(post.google_create_time ?? post.created_at!).toLocaleDateString(
+                            "en-US",
+                            {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            },
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* Recent Q&A */}
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-white">Recent Q&amp;A</h2>
+              <Link href="/locations" className="text-sm text-emerald-400 hover:text-emerald-300">
+                View locations
+              </Link>
+            </div>
+            {recentQna.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-400">
+                No questions yet. Once customers submit Q&amp;A on Google, they will appear here so
+                your team can respond quickly.
+              </p>
+            ) : (
+              <ul className="mt-4 space-y-4">
+                {recentQna.map((entry) => (
+                  <li key={entry.id} className="rounded-lg border border-slate-800 p-4">
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-white">{entry.question}</p>
+                          {entry.location && (
+                            <p className="mt-1 text-xs text-slate-500">{entry.location.title}</p>
+                          )}
+                        </div>
+                        {entry.created_at && (
+                          <p className="text-xs text-slate-500">
+                            {new Date(entry.created_at).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })}
+                          </p>
+                        )}
+                      </div>
+                      {entry.answer ? (
+                        <div className="rounded bg-slate-800/50 p-2">
+                          <p className="text-xs font-medium text-emerald-400">Your answer</p>
+                          <p className="mt-1 text-sm text-slate-300 line-clamp-3">{entry.answer}</p>
+                        </div>
+                      ) : (
+                        <button className="text-xs text-emerald-400 transition hover:text-emerald-300">
+                          Respond on Google
+                        </button>
+                      )}
                     </div>
                   </li>
                 ))}
