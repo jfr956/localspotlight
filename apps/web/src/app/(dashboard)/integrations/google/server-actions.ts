@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect";
 import type { Database } from "@/types/database";
 import {
   fetchGoogleLocations,
@@ -419,6 +420,9 @@ export async function syncReviewsAndQAAction(formData: FormData) {
 
     redirect(`/integrations/google?orgId=${orgId}&status=content_synced`);
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     console.error("[Sync] Reviews and Q&A sync failed:", error);
     redirect(`/integrations/google?orgId=${orgId}&status=sync_failed`);
   }
