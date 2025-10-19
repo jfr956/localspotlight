@@ -1,11 +1,17 @@
 "use server";
 
+import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createServerActionClientWithAuth } from "@/lib/supabase";
+import { buildPostPromptInput } from "@/lib/post-generation";
+import { createServerActionClientWithAuth, getServiceRoleClient } from "@/lib/supabase";
 import type { Database } from "@/types/database";
 
-type LocationRow = Database["public"]["Tables"]["gbp_locations"]["Row"];
+type Tables = Database["public"]["Tables"];
+type LocationRow = Tables["gbp_locations"]["Row"];
+type OrgRow = Tables["orgs"]["Row"];
+type SafetyRow = Tables["safety_rules"]["Row"];
+type AutomationPolicyRow = Tables["automation_policies"]["Row"];
 
 const POST_TYPES = new Set(["WHATS_NEW", "EVENT", "OFFER"]);
 const CTA_ACTIONS = new Set([
@@ -43,7 +49,7 @@ const isValidUrl = (value: string) => {
   }
 };
 
-export async function createManualPostAction(formData: FormData) {
+async function requireUser() {
   const supabase = await createServerActionClientWithAuth();
   const {
     data: { user },
@@ -52,6 +58,119 @@ export async function createManualPostAction(formData: FormData) {
   if (!user) {
     redirect("/sign-in");
   }
+
+  return { user, supabase };
+}
+
+async function loadLocation(locationId: string) {
+  const serviceRole = getServiceRoleClient();
+  const { data, error } = await serviceRole
+    .from("gbp_locations")
+    .select("*")
+    .eq("id", locationId)
+    .maybeSingle();
+
+  if (error || !data) {
+    redirect(`/locations?status=location_missing`);
+  }
+
+  return data as LocationRow;
+}
+
+async function ensureMembership(orgId: string, userId: string) {
+  const serviceRole = getServiceRoleClient();
+  const membership = await serviceRole
+    .from("org_members")
+    .select("role")
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const allowedRoles: Tables["org_members"]["Row"]["role"][] = ["owner", "admin", "editor"];
+  const role = membership.data?.role;
+
+  if (!role || !allowedRoles.includes(role)) {
+    redirect("/content?status=insufficient_role");
+  }
+}
+
+export async function startPostGenerationAction(formData: FormData) {
+  const { user } = await requireUser();
+
+  const locationIdRaw = formData.get("locationId");
+  const locationId = typeof locationIdRaw === "string" ? locationIdRaw.trim() : "";
+
+  if (!locationId) {
+    redirect("/content?status=missing_location");
+  }
+
+  const serviceRole = getServiceRoleClient();
+  const location = await loadLocation(locationId);
+
+  if (!location.is_managed) {
+    redirect(`/locations/${locationId}?status=not_managed`);
+  }
+
+  await ensureMembership(location.org_id, user.id);
+
+  const [{ data: orgData }, { data: safetyData }, { data: automationData }, { data: reviewsData }] =
+    await Promise.all([
+      serviceRole.from("orgs").select("*").eq("id", location.org_id).maybeSingle(),
+      serviceRole.from("safety_rules").select("*").eq("org_id", location.org_id).maybeSingle(),
+      serviceRole
+        .from("automation_policies")
+        .select("*")
+        .eq("org_id", location.org_id)
+        .eq("location_id", location.id)
+        .eq("content_type", "post")
+        .maybeSingle(),
+      serviceRole
+        .from("gbp_reviews")
+        .select("rating, text")
+        .eq("location_id", location.id)
+        .order("created_at", { ascending: false })
+        .limit(3),
+    ]);
+
+  const org = (orgData ?? {}) as OrgRow;
+  const safety = safetyData ?? (null as unknown as SafetyRow | null);
+  const automation = automationData ?? (null as unknown as AutomationPolicyRow | null);
+
+  const promptInput = buildPostPromptInput({
+    orgName: org?.name ?? "Your business",
+    location,
+    safety: safety ?? undefined,
+    recentReviews: (reviewsData ?? []) as Array<{ rating: number | null; text: string | null }>,
+    automation: automation ?? undefined,
+  });
+
+  const idempotencyKey = randomUUID();
+
+  const { data, error } = await serviceRole
+    .from("ai_generations")
+    .insert({
+      org_id: location.org_id,
+      location_id: location.id,
+      kind: "post",
+      input: promptInput,
+      status: "pending",
+      model: null,
+      idempotency_key: idempotencyKey,
+      meta: { trigger: "manual" },
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    console.error("[AI] Failed to enqueue generation", error);
+    redirect(`/locations/${locationId}?status=generation_failed`);
+  }
+
+  redirect(`/locations/${locationId}/posts/new?mode=ai&gen=${data.id}`);
+}
+
+export async function createManualPostAction(formData: FormData) {
+  const { user, supabase } = await requireUser();
 
   const locationIdRaw = formData.get("locationId");
   const locationId = typeof locationIdRaw === "string" ? locationIdRaw.trim() : "";
@@ -104,6 +223,8 @@ export async function createManualPostAction(formData: FormData) {
     redirect(`/locations/${locationId}?status=not_managed`);
   }
 
+  await ensureMembership(location.org_id, user.id);
+
   const images: string[] = [];
   const imageUrl =
     typeof imageUrlRaw === "string" && imageUrlRaw.trim().length > 0
@@ -132,6 +253,7 @@ export async function createManualPostAction(formData: FormData) {
     description,
     source: "manual",
     createdAt: new Date().toISOString(),
+    authorId: user.id,
   };
 
   if (ctaAction) {
@@ -141,14 +263,15 @@ export async function createManualPostAction(formData: FormData) {
     };
   }
 
-  const { data: postCandidate, error: insertCandidateError } = await supabase
+  const { data: postCandidate, error: insertCandidateError } = await getServiceRoleClient()
     .from("post_candidates")
     .insert({
       org_id: location.org_id,
       location_id: location.id,
-      schema: schema as unknown as Database["public"]["Tables"]["post_candidates"]["Insert"]["schema"],
+      schema: schema as Tables["post_candidates"]["Insert"]["schema"],
       images,
       status: "pending",
+      idempotency_key: randomUUID(),
     })
     .select("id")
     .maybeSingle();
@@ -158,14 +281,17 @@ export async function createManualPostAction(formData: FormData) {
     redirect(`/locations/${locationId}/posts/new?status=create_failed`);
   }
 
-  const { error: scheduleError } = await supabase.from("schedules").insert({
-    org_id: location.org_id,
-    location_id: location.id,
-    target_type: "post_candidate",
-    target_id: postCandidate.id,
-    publish_at: publishAtIso,
-    status: "pending",
-  });
+  const { error: scheduleError } = await getServiceRoleClient()
+    .from("schedules")
+    .insert({
+      org_id: location.org_id,
+      location_id: location.id,
+      target_type: "post_candidate",
+      target_id: postCandidate.id,
+      publish_at: publishAtIso,
+      status: "pending",
+      idempotency_key: randomUUID(),
+    });
 
   if (scheduleError) {
     console.error("Failed to schedule new post", scheduleError);
@@ -177,3 +303,5 @@ export async function createManualPostAction(formData: FormData) {
 
   redirect(`/locations/${locationId}?tab=posts&status=post_created`);
 }
+
+

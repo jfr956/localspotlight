@@ -1,8 +1,7 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createServerComponentClientWithAuth } from "@/lib/supabase";
 import type { Tables } from "@/types/database";
-import { generatePostDraftAction } from "./actions";
+import Link from "next/link";
 
 type Review = Tables<"gbp_reviews">;
 type Schedule = Tables<"schedules">;
@@ -590,18 +589,15 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
                 {recentSchedules.length > 0 && (
                   <div className="text-sm text-slate-400">{schedulesCount} total</div>
                 )}
-                <form action={generatePostDraftAction}>
-                  <input type="hidden" name="locationId" value={locationId} />
-                  <button
-                    type="submit"
-                    className="inline-flex items-center gap-2 rounded-lg border border-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/10"
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 15h16M10 19l4-4-4-4" />
-                    </svg>
-                    Generate with AI
-                  </button>
-                </form>
+                <Link
+                  href={`/locations/${locationId}/posts/new?mode=ai`}
+                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/10"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 15h16M10 19l4-4-4-4" />
+                  </svg>
+                  Generate with AI
+                </Link>
               </div>
             </div>
 

@@ -10,6 +10,7 @@
     "test": "vitest",
     "test:ci": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:google-sync": "tsx test-google-sync.ts",
     "format": "pnpm exec prettier --check ."
   },
   "dependencies": {
@@ -36,10 +37,12 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4.3.4",
+    "dotenv": "^17.2.3",
     "eslint": "^9",
     "eslint-config-next": "15.5.6",
     "jsdom": "^25.0.1",
     "tailwindcss": "^4",
+    "tsx": "^4.20.6",
     "typescript": "^5",
     "vitest": "^2.1.4"
   }

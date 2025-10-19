@@ -69,6 +69,32 @@ export default async function GoogleIntegrationPage({ searchParams }: Integratio
         .filter("org_id", "eq", currentOrgId)
     : { count: 0 };
 
+  // Check if any content has been synced
+  const { count: totalReviews } = currentOrgId
+    ? await db
+        .from("gbp_reviews")
+        .select("*", { count: "exact", head: true })
+        .filter("org_id", "eq", currentOrgId)
+    : { count: 0 };
+
+  const { count: totalQuestions } = currentOrgId
+    ? await db
+        .from("gbp_qna")
+        .select("*", { count: "exact", head: true })
+        .filter("org_id", "eq", currentOrgId)
+    : { count: 0 };
+
+  const { count: totalPosts } = currentOrgId
+    ? await db
+        .from("gbp_posts")
+        .select("*", { count: "exact", head: true })
+        .filter("org_id", "eq", currentOrgId)
+    : { count: 0 };
+
+  const totalContent = (totalReviews ?? 0) + (totalQuestions ?? 0) + (totalPosts ?? 0);
+  const hasConnections = (connections.data?.length ?? 0) > 0;
+  const hasLocations = (totalLocations ?? 0) > 0;
+
   type AccountRow = {
     google_account_name: string | null;
     display_name: string | null;
@@ -101,6 +127,40 @@ export default async function GoogleIntegrationPage({ searchParams }: Integratio
       {currentStatus ? (
         <div className="rounded-lg border border-emerald-500 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
           {buildStatusMessage(currentStatus)}
+        </div>
+      ) : null}
+
+      {/* API Access Info Banner - shown if connected but no content synced */}
+      {hasConnections && hasLocations && totalContent === 0 && !currentStatus ? (
+        <div className="rounded-lg border border-blue-500 bg-blue-500/10 px-4 py-3 text-sm text-blue-200">
+          <div className="flex items-start gap-3">
+            <svg
+              className="h-5 w-5 flex-shrink-0 text-blue-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            <div className="space-y-1">
+              <p className="font-medium">Google API access may be pending</p>
+              <p className="text-xs text-blue-300">
+                No content has been synced yet. This is normal if you just connected. Google may
+                require additional API access approval for reading reviews, Q&A, and posts.{" "}
+                <Link
+                  href="/DOCS-API-ACCESS.md"
+                  className="font-medium text-blue-200 underline hover:text-blue-100"
+                >
+                  Learn how to request access
+                </Link>
+              </p>
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -327,6 +387,8 @@ function buildStatusMessage(status: string): string {
       return "Google account disconnected successfully. All connections and synced data have been removed.";
     case "disconnect_failed":
       return "Failed to disconnect Google account. Check logs and try again.";
+    case "api_access_pending":
+      return "Google API access may be pending. No content was found for your locations. This is normal if you just connected - Google may require additional approval to access reviews, Q&A, and posts. Learn how to request access in our API access guide below.";
     default:
       return "Something unexpected happened while connecting to Google.";
   }
