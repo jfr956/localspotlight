@@ -54,15 +54,21 @@ export const buildPostPromptInput = (context: PostPromptContext): PostPromptInpu
 
   const meta = (location.meta as Record<string, unknown> | null) ?? {};
 
+  const tone = sanitizeText((meta.brandVoice as { tone?: string } | undefined)?.tone);
+  const styleNotes = toArrayOfStrings((meta.brandVoice as { styleNotes?: unknown } | undefined)?.styleNotes);
+
+  const brandVoice =
+    tone || styleNotes.length > 0
+      ? {
+          tone: tone ?? "confident and approachable",
+          styleNotes,
+        }
+      : undefined;
+
   return {
     org: {
       name: orgName,
-      brandVoice: meta.brandVoice && typeof meta.brandVoice === "object"
-        ? {
-            tone: sanitizeText((meta.brandVoice as { tone?: string }).tone) ?? undefined,
-            styleNotes: toArrayOfStrings((meta.brandVoice as { styleNotes?: unknown }).styleNotes),
-          }
-        : undefined,
+      brandVoice,
     },
     location: {
       name: location.title ?? "Managed location",

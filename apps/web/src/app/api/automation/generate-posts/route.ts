@@ -273,7 +273,7 @@ export async function POST(request: NextRequest) {
           org_id: location.org_id,
           location_id: location.id,
           generation_id: generationId,
-          schema: postSchema,
+          schema: postSchema as unknown as Database["public"]["Tables"]["post_candidates"]["Insert"]["schema"],
           images: [],
           status: policy.mode === "autopilot" ? "approved" : "pending",
         })

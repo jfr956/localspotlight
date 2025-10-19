@@ -66,8 +66,8 @@ export async function generatePostDraftAction(formData: FormData) {
   }
 
   const [orgQuery, safetyQuery, recentReviewsQuery, automationPolicyQuery] = await Promise.all([
-    serviceRole.from("orgs").select("name").eq("id", location.org_id).maybeSingle(),
-    serviceRole.from("safety_rules").select("banned_terms, required_phrases, blocked_categories").eq("org_id", location.org_id).maybeSingle(),
+    serviceRole.from("orgs").select("*").eq("id", location.org_id).maybeSingle(),
+    serviceRole.from("safety_rules").select("*").eq("org_id", location.org_id).maybeSingle(),
     serviceRole
       .from("gbp_reviews")
       .select("rating, text")
@@ -76,7 +76,7 @@ export async function generatePostDraftAction(formData: FormData) {
       .limit(3),
     serviceRole
       .from("automation_policies")
-      .select("mode, risk_threshold")
+      .select("*")
       .eq("org_id", location.org_id)
       .eq("content_type", "post")
       .eq("location_id", location.id)
@@ -85,10 +85,10 @@ export async function generatePostDraftAction(formData: FormData) {
 
   const orgName = orgQuery.data?.name ?? "Your business";
   const safety = safetyQuery.data as Database["public"]["Tables"]["safety_rules"]["Row"] | null;
-  const recentReviews = (recentReviewsQuery.data ?? []).filter(
-    (review): review is { rating?: number | null; text?: string | null } =>
-      typeof review === "object" && review !== null,
-  );
+  const recentReviews = (recentReviewsQuery.data ?? []) as Array<{
+    rating: number | null;
+    text: string | null;
+  }>;
   const automation = automationPolicyQuery.data as
     | Database["public"]["Tables"]["automation_policies"]["Row"]
     | null
@@ -166,7 +166,7 @@ export async function generatePostDraftAction(formData: FormData) {
       org_id: location.org_id,
       location_id: location.id,
       generation_id: generationId,
-      schema: postSchema,
+      schema: postSchema as unknown as Database["public"]["Tables"]["post_candidates"]["Insert"]["schema"],
       images: [],
       status: "pending",
     });

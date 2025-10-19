@@ -17,6 +17,21 @@ type MembershipRole = Database["public"]["Enums"]["org_member_role"];
 
 const APPROVER_ROLES: MembershipRole[] = ["owner", "admin", "editor"];
 
+type CandidateWithLocation = Database["public"]["Tables"]["post_candidates"]["Row"] & {
+  gbp_locations: Pick<
+    Database["public"]["Tables"]["gbp_locations"]["Row"],
+    "id" | "org_id" | "title" | "is_managed" | "meta"
+  >;
+  schedules: Array<Pick<Database["public"]["Tables"]["schedules"]["Row"], "id">>;
+};
+
+type CandidateWithGeneration = Database["public"]["Tables"]["post_candidates"]["Row"] & {
+  gbp_locations: Database["public"]["Tables"]["gbp_locations"]["Row"];
+  ai_generations: Array<
+    Pick<Database["public"]["Tables"]["ai_generations"]["Row"], "id" | "input">
+  >;
+};
+
 async function requireUser() {
   const supabase = await createServerActionClientWithAuth();
   const {
@@ -72,16 +87,7 @@ export async function approvePostCandidateAction(formData: FormData) {
   const candidateQuery = await serviceRole
     .from("post_candidates")
     .select(
-      `
-      id,
-      org_id,
-      location_id,
-      status,
-      schema,
-      generation_id,
-      gbp_locations!inner(id, org_id, title, is_managed),
-      schedules(id)
-    `,
+      "*, gbp_locations!inner(*), schedules(id)",
     )
     .eq("id", candidateId)
     .maybeSingle();
@@ -90,10 +96,7 @@ export async function approvePostCandidateAction(formData: FormData) {
     redirect("/content?status=candidate_missing");
   }
 
-  const candidate = candidateQuery.data as Database["public"]["Tables"]["post_candidates"]["Row"] & {
-    gbp_locations: Pick<Database["public"]["Tables"]["gbp_locations"]["Row"], "id" | "org_id" | "title" | "is_managed">;
-    schedules: Array<Pick<Database["public"]["Tables"]["schedules"]["Row"], "id">>;
-  };
+  const candidate = candidateQuery.data as unknown as CandidateWithLocation;
 
   if (!candidate.gbp_locations?.is_managed) {
     redirect("/content?status=location_not_managed");
@@ -160,13 +163,7 @@ export async function rejectPostCandidateAction(formData: FormData) {
   const candidateQuery = await serviceRole
     .from("post_candidates")
     .select(
-      `
-      id,
-      org_id,
-      location_id,
-      status,
-      gbp_locations!inner(id, org_id, is_managed)
-    `,
+      "*, gbp_locations!inner(*)",
     )
     .eq("id", candidateId)
     .maybeSingle();
@@ -175,9 +172,7 @@ export async function rejectPostCandidateAction(formData: FormData) {
     redirect("/content?status=candidate_missing");
   }
 
-  const candidate = candidateQuery.data as Database["public"]["Tables"]["post_candidates"]["Row"] & {
-    gbp_locations: Pick<Database["public"]["Tables"]["gbp_locations"]["Row"], "id" | "org_id" | "is_managed">;
-  };
+  const candidate = candidateQuery.data as unknown as CandidateWithLocation;
 
   await requireMembership(candidate.org_id, user.id);
 
@@ -214,11 +209,7 @@ export async function regeneratePostCandidateAction(formData: FormData) {
   const candidateQuery = await serviceRole
     .from("post_candidates")
     .select(
-      `
-      *,
-      gbp_locations!inner(id, org_id, title, is_managed, meta),
-      ai_generations!left(id, input)
-    `,
+      "*, gbp_locations(*), ai_generations!left(id, input)",
     )
     .eq("id", candidateId)
     .maybeSingle();
@@ -227,10 +218,7 @@ export async function regeneratePostCandidateAction(formData: FormData) {
     redirect("/content?status=candidate_missing");
   }
 
-  const candidate = candidateQuery.data as Database["public"]["Tables"]["post_candidates"]["Row"] & {
-    gbp_locations: Database["public"]["Tables"]["gbp_locations"]["Row"];
-    ai_generations: Array<Pick<Database["public"]["Tables"]["ai_generations"]["Row"], "id" | "input">>;
-  };
+  const candidate = candidateQuery.data as unknown as CandidateWithGeneration;
 
   await requireMembership(candidate.org_id, user.id);
 
@@ -240,19 +228,19 @@ export async function regeneratePostCandidateAction(formData: FormData) {
 
   const { data: orgQuery } = await serviceRole
     .from("orgs")
-    .select("name")
+    .select("*")
     .eq("id", candidate.org_id)
     .maybeSingle();
 
   const { data: safetyQuery } = await serviceRole
     .from("safety_rules")
-    .select("banned_terms, required_phrases, blocked_categories")
+    .select("*")
     .eq("org_id", candidate.org_id)
     .maybeSingle();
 
   const { data: automationQuery } = await serviceRole
     .from("automation_policies")
-    .select("mode, risk_threshold, quiet_hours, require_disclaimers")
+    .select("*")
     .eq("org_id", candidate.org_id)
     .eq("location_id", candidate.location_id)
     .eq("content_type", "post")
@@ -327,7 +315,7 @@ export async function regeneratePostCandidateAction(formData: FormData) {
   const { error: candidateUpdateError } = await serviceRole
     .from("post_candidates")
     .update({
-      schema: postSchema,
+      schema: postSchema as unknown as Database["public"]["Tables"]["post_candidates"]["Update"]["schema"],
       images: [],
       status: "pending",
       generation_id: newGeneration.id,

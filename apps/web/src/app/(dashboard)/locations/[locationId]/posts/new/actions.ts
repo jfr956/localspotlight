@@ -146,7 +146,7 @@ export async function createManualPostAction(formData: FormData) {
     .insert({
       org_id: location.org_id,
       location_id: location.id,
-      schema,
+      schema: schema as unknown as Database["public"]["Tables"]["post_candidates"]["Insert"]["schema"],
       images,
       status: "pending",
     })

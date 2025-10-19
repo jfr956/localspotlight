@@ -120,7 +120,7 @@ export default async function ContentPage({ searchParams }: ContentPageProps) {
       *,
       gbp_locations!inner(title, is_managed)
     `)
-    .eq("state", "pending")
+    .eq("status", "pending")
     .order("created_at", { ascending: false })
     .limit(20);
 
