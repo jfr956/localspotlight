@@ -1,0 +1,23 @@
+# GitHub Repository Creation Commands
+# Run these commands one by one in your terminal:
+
+# 1. Install GitHub CLI (if not already installed)
+brew install gh
+
+# 2. Authenticate with GitHub
+gh auth login --web --scopes repo
+
+# 3. Create the repository
+gh repo create localspotlight \
+  --public \
+  --description "LocalSpotlight - AI-powered Google Business Profile management platform" \
+  --source=. \
+  --push
+
+# 4. Verify the repository was created
+gh repo view jfr956/localspotlight
+
+# Alternative: If the above doesn't work, try this:
+# gh repo create localspotlight --public --description "LocalSpotlight - AI-powered Google Business Profile management platform"
+# git remote add origin https://github.com/jfr956/localspotlight.git
+# git push -u origin main
