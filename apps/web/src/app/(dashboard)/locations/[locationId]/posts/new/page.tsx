@@ -1,14 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createServerComponentClientWithAuth } from "@/lib/supabase";
-import type { Tables } from "@/types/database";
 import { createManualPostAction } from "./actions";
 
 export const metadata = {
   title: "Create Post • LocalSpotlight",
 };
-
-type Location = Tables<"gbp_locations">;
 
 interface NewPostPageProps {
   params: Promise<{ locationId: string }>;
@@ -41,7 +38,7 @@ const statusMessages: Record<
   },
   create_failed: {
     tone: "error",
-    title: "We couldn't create the post",
+    title: "We could not create the post",
     description: "Please try again in a moment. If the issue persists, contact support.",
   },
 };
@@ -148,7 +145,7 @@ export default async function NewLocationPostPage({ params, searchParams }: NewP
               className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
               defaultValue="WHATS_NEW"
             >
-              <option value="WHATS_NEW">What's New</option>
+              <option value="WHATS_NEW">What&apos;s New</option>
               <option value="EVENT">Event</option>
               <option value="OFFER">Offer</option>
             </select>
@@ -174,7 +171,7 @@ export default async function NewLocationPostPage({ params, searchParams }: NewP
             <label htmlFor="description" className="block text-sm font-medium text-slate-300">
               Body copy
             </label>
-            <p className="text-xs text-slate-500">Tell customers what's new in 750 characters or less.</p>
+            <p className="text-xs text-slate-500">Tell customers what is new in 750 characters or less.</p>
             <textarea
               id="description"
               name="description"

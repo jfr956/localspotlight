@@ -8,6 +8,27 @@ type Schedule = Tables<"schedules">;
 type QNA = Tables<"gbp_qna">;
 type GbpPost = Tables<"gbp_posts">;
 
+const STATUS_ALERTS: Record<
+  string,
+  { tone: "success" | "error" | "warning"; title: string; description: string }
+> = {
+  post_created: {
+    tone: "success",
+    title: "Post scheduled",
+    description: "Your draft was added to the queue. We’ll publish it at the scheduled time.",
+  },
+  schedule_failed: {
+    tone: "error",
+    title: "We couldn't schedule the post",
+    description: "The draft was created, but scheduling failed. Review the post and try again.",
+  },
+  not_managed: {
+    tone: "warning",
+    title: "Location is not managed",
+    description: "Toggle this location on in Google integrations to enable posting and automations.",
+  },
+};
+
 interface LocationPageProps {
   params: Promise<{ locationId: string }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -33,6 +54,8 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
   const { locationId } = await params;
   const searchParamsResolved = searchParams ? await searchParams : {};
   const activeTab = typeof searchParamsResolved.tab === "string" ? searchParamsResolved.tab : "overview";
+  const statusKey = typeof searchParamsResolved.status === "string" ? searchParamsResolved.status : null;
+  const statusAlert = statusKey ? STATUS_ALERTS[statusKey] : undefined;
 
   const supabase = await createServerComponentClientWithAuth();
   const db = supabase as unknown as { from: typeof supabase.from };
@@ -120,6 +143,21 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
 
   return (
     <div className="space-y-8">
+      {statusAlert && (
+        <div
+          className={`rounded-xl border p-4 ${
+            statusAlert.tone === "success"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : statusAlert.tone === "error"
+                ? "border-red-500/30 bg-red-500/10 text-red-200"
+                : "border-yellow-500/30 bg-yellow-500/10 text-yellow-200"
+          }`}
+        >
+          <p className="text-sm font-semibold">{statusAlert.title}</p>
+          <p className="mt-1 text-sm opacity-80">{statusAlert.description}</p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="space-y-4">
         <Link
