@@ -7,25 +7,15 @@ import {
   DEFAULT_RISK_THRESHOLD,
   DEFAULT_MAX_RETRIES,
   postPrompt,
-  type PostPromptInput,
 } from "@localspotlight/core";
 import { getAiService, DEFAULT_FALLBACK_MODEL } from "@/lib/ai-service";
 import { createServerActionClientWithAuth, getServiceRoleClient } from "@/lib/supabase";
 import type { Database } from "@/types/database";
+import { buildPostPromptInput, buildPostCandidateSchema } from "@/lib/post-generation";
 
 type MembershipRole = Database["public"]["Enums"]["org_member_role"];
 
 const ALLOWED_ROLES: MembershipRole[] = ["owner", "admin", "editor"];
-
-const toArrayOfStrings = (value: unknown): string[] => {
-  if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === "string");
-  }
-  return [];
-};
-
-const sanitizeText = (value: unknown): string | undefined =>
-  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 
 export async function generatePostDraftAction(formData: FormData) {
   const supabase = await createServerActionClientWithAuth();
@@ -104,44 +94,13 @@ export async function generatePostDraftAction(formData: FormData) {
     | null
     | undefined;
 
-  const meta = (location.meta as Record<string, unknown> | null) ?? {};
-
-  const promptInput: PostPromptInput = {
-    org: {
-      name: orgName,
-    },
-    location: {
-      name: location.title ?? "Managed location",
-      address: sanitizeText(meta.address),
-      categories: toArrayOfStrings(meta.categories),
-      differentiators: toArrayOfStrings(meta.differentiators),
-      seasonalNotes: toArrayOfStrings(meta.seasonalHighlights),
-    },
-    brief: {
-      headlineGoal: sanitizeText(meta.pitchLine) ?? "Announce something timely for local customers.",
-      bodyGoal:
-        sanitizeText(meta.contentFocus) ??
-        "Highlight a service or offer that drives foot traffic and calls.",
-      campaign: sanitizeText(meta.campaignTagline),
-      focusKeywords: toArrayOfStrings(meta.focusKeywords),
-    },
-    guardrails: safety
-      ? {
-          bannedTerms: safety.banned_terms ?? [],
-          requiredPhrases: safety.required_phrases ?? [],
-          disclaimers: [],
-          blockedCategories: safety.blocked_categories ?? [],
-        }
-      : undefined,
-    schedule: undefined,
-    references: recentReviews
-      .filter((review) => sanitizeText(review.text))
-      .map((review, index) => ({
-        type: "review" as const,
-        title: `Customer review ${index + 1}`,
-        body: sanitizeText(review.text) ?? "",
-      })),
-  };
+  const promptInput = buildPostPromptInput({
+    orgName,
+    location,
+    safety: safety ?? undefined,
+    recentReviews,
+    automation: automation ?? undefined,
+  });
 
   const riskThreshold = automation?.risk_threshold ?? DEFAULT_RISK_THRESHOLD;
 
@@ -195,23 +154,13 @@ export async function generatePostDraftAction(formData: FormData) {
       redirect(`/locations/${locationId}?status=generation_blocked`);
     }
 
-    const postSchema = {
-      type: "WHATS_NEW",
-      title: generation.output.headline,
-      description: generation.output.body,
-      cta: generation.output.callToAction ?? null,
-      mediaBrief: generation.output.mediaBrief ?? null,
-      riskScore: generation.output.riskScore,
-      policyFindings: generation.output.policyFindings,
-      supportingPoints: generation.output.supportingPoints,
-      prompt: postPrompt.name,
+    const postSchema = buildPostCandidateSchema({
+      output: generation.output,
       model: generation.model,
-      generatedAt: new Date().toISOString(),
-      metadata: {
-        automationMode: automation?.mode ?? "off",
-        userId: user.id,
-      },
-    };
+      automationMode: automation?.mode ?? "off",
+      userId: user.id,
+      trigger: "manual",
+    });
 
     const { error: candidateError } = await serviceRole.from("post_candidates").insert({
       org_id: location.org_id,

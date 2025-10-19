@@ -129,6 +129,14 @@ pnpm db:push
 # Update environment variables in your hosting platform
 ```
 
+### Scheduled Jobs
+
+Supabase Cron triggers `/api/automation/generate-posts` daily to queue AI post candidates for managed locations.
+
+1. Set `AUTOMATION_CRON_SECRET` in both `.env.local` and your Supabase project settings.
+2. Update the job schedule in `supabase/config.toml` (`[[cron.jobs]]`) if you need a different cadence.
+3. Redeploy configuration when the schedule changes: `supabase link` (if needed) then `supabase deploy cron`.
+
 ### Resources
 
 - [Main Setup Guide](../SUPABASE_SETUP.md) - Complete installation and migration guide

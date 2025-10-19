@@ -315,6 +315,13 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+[[cron.jobs]]
+name = "generate_post_candidates"
+schedule = "0 13 * * *"
+request.method = "POST"
+request.url = "http://127.0.0.1:3000/api/automation/generate-posts"
+request.headers.Authorization = "Bearer env(AUTOMATION_CRON_SECRET)"
+
 [analytics]
 enabled = true
 port = 54327

@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { createServerComponentClientWithAuth } from "@/lib/supabase";
 import type { Tables } from "@/types/database";
+import {
+  approvePostCandidateAction,
+  rejectPostCandidateAction,
+  regeneratePostCandidateAction,
+} from "./actions";
 
 export const metadata = {
   title: "Content • LocalSpotlight",
@@ -9,7 +14,87 @@ export const metadata = {
 type Schedule = Tables<"schedules">;
 type PostCandidate = Tables<"post_candidates">;
 
-export default async function ContentPage() {
+interface ContentPageProps {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}
+
+const STATUS_ALERTS: Record<
+  string,
+  { tone: "success" | "error" | "warning"; title: string; description: string }
+> = {
+  post_approved: {
+    tone: "success",
+    title: "Post approved",
+    description: "We scheduled the post. It will publish at the planned time unless you update it.",
+  },
+  post_rejected: {
+    tone: "warning",
+    title: "Post rejected",
+    description: "The draft was archived. Generate a fresh version whenever you are ready.",
+  },
+  regenerate_success: {
+    tone: "success",
+    title: "Post regenerated",
+    description: "We saved the new draft. Review and approve when you are satisfied.",
+  },
+  regenerate_blocked: {
+    tone: "warning",
+    title: "Regeneration blocked",
+    description: "Policy checks flagged the output. Adjust inputs and try again.",
+  },
+  regenerate_failed: {
+    tone: "error",
+    title: "Regeneration failed",
+    description: "We could not refresh the draft. Please retry in a few minutes.",
+  },
+  approval_failed: {
+    tone: "error",
+    title: "Approval failed",
+    description: "We hit an issue while approving this post. Try again shortly.",
+  },
+  schedule_failed: {
+    tone: "error",
+    title: "Scheduling failed",
+    description: "Creating the publish schedule errored. Update and retry once resolved.",
+  },
+  reject_failed: {
+    tone: "error",
+    title: "Rejection failed",
+    description: "We could not update the draft status. Refresh and try again.",
+  },
+  insufficient_role: {
+    tone: "error",
+    title: "You need editor access",
+    description: "Only editors or admins can manage post approvals. Ask an owner to update your role.",
+  },
+  candidate_missing: {
+    tone: "error",
+    title: "Draft not found",
+    description: "The post candidate no longer exists. It might have been processed already.",
+  },
+  location_not_managed: {
+    tone: "warning",
+    title: "Location unmanaged",
+    description: "Enable management for this location before approving posts.",
+  },
+  already_approved: {
+    tone: "warning",
+    title: "Post already approved",
+    description: "Another teammate approved this draft. Review it in the schedule.",
+  },
+  already_rejected: {
+    tone: "warning",
+    title: "Post already rejected",
+    description: "This draft was archived earlier. Generate a new version if needed.",
+  },
+};
+
+export default async function ContentPage({ searchParams }: ContentPageProps) {
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const status =
+    typeof resolvedSearchParams.status === "string" ? resolvedSearchParams.status : undefined;
+  const alert = status ? STATUS_ALERTS[status] : undefined;
+
   const supabase = await createServerComponentClientWithAuth();
   const db = supabase as unknown as { from: typeof supabase.from };
 
@@ -63,6 +148,21 @@ export default async function ContentPage() {
           Create Post
         </button>
       </header>
+
+      {alert && (
+        <div
+          className={`rounded-xl border p-4 ${
+            alert.tone === "success"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : alert.tone === "error"
+                ? "border-red-500/30 bg-red-500/10 text-red-200"
+                : "border-yellow-500/30 bg-yellow-500/10 text-yellow-200"
+          }`}
+        >
+          <p className="text-sm font-semibold">{alert.title}</p>
+          <p className="mt-1 text-sm opacity-80">{alert.description}</p>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid gap-6 sm:grid-cols-4">
@@ -137,44 +237,79 @@ export default async function ContentPage() {
             </span>
           </div>
           <ul className="space-y-4">
-            {managedCandidates.slice(0, 5).map((candidate) => {
-              const schema = candidate.schema as { headline?: string; body?: string; type?: string } | null;
-              return (
-                <li key={candidate.id} className="rounded-lg border border-slate-800 p-4 hover:border-slate-700 transition">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3">
-                        <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wide text-slate-400">
-                          {schema?.type ?? "Post"}
-                        </span>
-                        <span className="text-xs text-slate-500">
-                          {candidate.gbp_locations?.title ?? "Unknown location"}
-                        </span>
+                {managedCandidates.slice(0, 5).map((candidate) => {
+                  const schema = candidate.schema as { headline?: string; body?: string; type?: string } | null;
+                  return (
+                    <li key={candidate.id} className="rounded-lg border border-slate-800 p-4 hover:border-slate-700 transition">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3">
+                            <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wide text-slate-400">
+                              {schema?.type ?? "Post"}
+                            </span>
+                            <span className={`rounded-full px-2 py-0.5 text-xs uppercase tracking-wide ${
+                              candidate.status === "pending"
+                                ? "bg-yellow-500/10 text-yellow-400"
+                                : candidate.status === "approved"
+                                  ? "bg-emerald-500/10 text-emerald-400"
+                                  : candidate.status === "rejected"
+                                    ? "bg-red-500/10 text-red-400"
+                                    : "bg-slate-500/10 text-slate-400"
+                            }`}>
+                              {candidate.status ?? "pending"}
+                            </span>
+                            <span className="text-xs text-slate-500">
+                              {candidate.gbp_locations?.title ?? "Unknown location"}
+                            </span>
+                          </div>
+                          {schema?.headline && (
+                            <h3 className="mt-2 font-medium text-white">{schema.headline}</h3>
+                          )}
+                          {schema?.body && (
+                            <p className="mt-1 text-sm text-slate-400 line-clamp-2">{schema.body}</p>
+                          )}
+                          <div className="mt-3 flex gap-2">
+                            <form action={approvePostCandidateAction}>
+                              <input type="hidden" name="candidateId" value={candidate.id} />
+                              <button
+                                type="submit"
+                                className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-950 transition hover:bg-emerald-400"
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                                Approve
+                              </button>
+                            </form>
+                            <form action={regeneratePostCandidateAction}>
+                              <input type="hidden" name="candidateId" value={candidate.id} />
+                              <button
+                                type="submit"
+                                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800"
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 15h16M10 19l4-4-4-4" />
+                                </svg>
+                                Regenerate
+                              </button>
+                            </form>
+                            <form action={rejectPostCandidateAction}>
+                              <input type="hidden" name="candidateId" value={candidate.id} />
+                              <button
+                                type="submit"
+                                className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-1.5 text-sm font-medium text-red-400 transition hover:bg-red-500/10"
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                                Reject
+                              </button>
+                            </form>
+                          </div>
+                        </div>
                       </div>
-                      {schema?.headline && (
-                        <h3 className="mt-2 font-medium text-white">{schema.headline}</h3>
-                      )}
-                      {schema?.body && (
-                        <p className="mt-1 text-sm text-slate-400 line-clamp-2">{schema.body}</p>
-                      )}
-                      <div className="mt-3 flex gap-2">
-                        <button className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-950 transition hover:bg-emerald-400">
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                          Approve
-                        </button>
-                        <button className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800">
-                          Edit
-                        </button>
-                        <button className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-1.5 text-sm font-medium text-red-400 transition hover:bg-red-500/10">
-                          Reject
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </li>
-              );
+                    </li>
+                  );
             })}
           </ul>
         </section>
