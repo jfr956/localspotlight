@@ -64,7 +64,6 @@ export default async function DashboardPage() {
   > = [];
 
   if (userOrgIds.length > 0) {
-    const orgIdInClause = `(${userOrgIds.map((id) => `"${id}"`).join(",")})`;
     // Fetch dashboard statistics
     const [locationsResult, reviewsResult, schedulesResult, recentReviewsResult, recentSchedulesResult] =
       await Promise.all([
@@ -72,20 +71,20 @@ export default async function DashboardPage() {
         db
           .from("gbp_locations")
           .select("id", { count: "exact", head: true })
-          .filter("org_id", "in", orgIdInClause),
+          .in("org_id", userOrgIds),
 
         // Total reviews count and average rating
         db
           .from("gbp_reviews")
           .select("rating")
-          .filter("org_id", "in", orgIdInClause)
+          .in("org_id", userOrgIds)
           .not("rating", "is", null),
 
         // Pending schedules count
         db
           .from("schedules")
           .select("id", { count: "exact", head: true })
-          .filter("org_id", "in", orgIdInClause)
+          .in("org_id", userOrgIds)
           .filter("status", "eq", "pending"),
 
         // Recent reviews with location info
@@ -107,7 +106,7 @@ export default async function DashboardPage() {
             gbp_locations!inner(title)
           `
           )
-          .filter("org_id", "in", orgIdInClause)
+          .in("org_id", userOrgIds)
           .order("created_at", { ascending: false })
           .limit(5),
 
@@ -129,7 +128,7 @@ export default async function DashboardPage() {
             gbp_locations!inner(title)
           `
           )
-          .filter("org_id", "in", orgIdInClause)
+          .in("org_id", userOrgIds)
           .order("publish_at", { ascending: false })
           .limit(5),
       ]);
