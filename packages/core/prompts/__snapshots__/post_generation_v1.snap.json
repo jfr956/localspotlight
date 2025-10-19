@@ -1,0 +1,21 @@
+{
+  "prompt": "post_generation_v1",
+  "captureDate": "2025-10-19",
+  "input": {
+    "org": {"name": "Acme Coffee"},
+    "location": {"name": "Acme Coffee - Downtown"},
+    "brief": {"headlineGoal": "Promote fall drinks"},
+    "guardrails": {"bannedTerms": [], "requiredPhrases": ["Acme Coffee"]},
+    "references": [
+      {"type": "service", "title": "Pumpkin Spice Latte", "body": "Fresh pumpkin puree and warming spices."}
+    ]
+  },
+  "output": {
+    "headline": "Warm Up With Acme Coffee's Pumpkin Spice Latte",
+    "body": "Sip into sweater weather with our seasonal Pumpkin Spice Latte, crafted with real pumpkin puree, cinnamon, and nutmeg. Drop by Acme Coffee - Downtown this week and pair it with your favorite pastry for the perfect fall treat.",
+    "callToAction": {"label": "Order Ahead"},
+    "mediaBrief": {"concept": "Steaming latte on reclaimed wood table with cinnamon sticks"},
+    "riskScore": 0.18,
+    "policyFindings": []
+  }
+}

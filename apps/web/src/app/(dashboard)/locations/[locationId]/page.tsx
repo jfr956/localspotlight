@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createServerComponentClientWithAuth } from "@/lib/supabase";
 import type { Tables } from "@/types/database";
+import { generatePostDraftAction } from "./actions";
 
 type Review = Tables<"gbp_reviews">;
 type Schedule = Tables<"schedules">;
@@ -19,13 +20,33 @@ const STATUS_ALERTS: Record<
   },
   schedule_failed: {
     tone: "error",
-    title: "We couldn't schedule the post",
+    title: "We could not schedule the post",
     description: "The draft was created, but scheduling failed. Review the post and try again.",
   },
   not_managed: {
     tone: "warning",
     title: "Location is not managed",
     description: "Toggle this location on in Google integrations to enable posting and automations.",
+  },
+  generation_ready: {
+    tone: "success",
+    title: "AI post ready for review",
+    description: "We drafted a new post based on recent signals. Review it from the Content queue.",
+  },
+  generation_blocked: {
+    tone: "warning",
+    title: "Post held for moderation",
+    description: "The AI flagged policy risks. Tweak automation settings or regenerate with different context.",
+  },
+  generation_failed: {
+    tone: "error",
+    title: "AI generation failed",
+    description: "We were unable to generate this post. Try again or check your OpenAI setup.",
+  },
+  insufficient_role: {
+    tone: "error",
+    title: "You need editor permissions",
+    description: "Ask an organization admin to grant editor access before generating posts.",
   },
 };
 
@@ -565,9 +586,23 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-white">Scheduled Posts</h2>
-              {recentSchedules.length > 0 && (
-                <div className="text-sm text-slate-400">{schedulesCount} total</div>
-              )}
+              <div className="flex items-center gap-3">
+                {recentSchedules.length > 0 && (
+                  <div className="text-sm text-slate-400">{schedulesCount} total</div>
+                )}
+                <form action={generatePostDraftAction}>
+                  <input type="hidden" name="locationId" value={locationId} />
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-2 rounded-lg border border-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/10"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 15h16M10 19l4-4-4-4" />
+                    </svg>
+                    Generate with AI
+                  </button>
+                </form>
+              </div>
             </div>
 
           {/* Filter tabs */}
