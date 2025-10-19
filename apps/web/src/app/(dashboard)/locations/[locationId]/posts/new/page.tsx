@@ -294,6 +294,8 @@ export default async function NewLocationPostPage({ params, searchParams }: NewP
     </form>
   );
 
+  const tabContent = (() => {
+    switch (selectedTab) {
       case "ai":
         return (
           <div className="rounded-2xl border border-emerald-500/20 bg-slate-900/70">
@@ -325,6 +327,7 @@ export default async function NewLocationPostPage({ params, searchParams }: NewP
             </p>
           </div>
         );
+      case "compose":
       default:
         return (
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">

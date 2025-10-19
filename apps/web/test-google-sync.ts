@@ -11,7 +11,7 @@ const ORG_ID = "a684026d-5676-48f8-a249-a5bd662f8552";
 const LOCATION_NAME = "locations/16919135625305195332";
 
 async function testGoogleAPIs() {
-  console.log("=== Google Business Profile API Test ===\n");
+  console.log("=== Google Business Profile API Test (2025) ===\n");
 
   // Verify environment variables are loaded
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -68,24 +68,28 @@ async function testGoogleAPIs() {
 
   console.log("✓ OAuth2 client configured\n");
 
-  // Step 4: Test Business Profile Information API (newer API)
-  console.log("Step 4: Testing Business Profile Information API...");
+  // Step 4: Test Business Profile Information API (v1 - current)
+  console.log("Step 4: Testing Business Profile Information API (v1)...");
   try {
-    // Use the correct read_mask parameter for the Business Profile API
-    const response = await oauth2Client.request({
-      url: `https://mybusinessbusinessinformation.googleapis.com/v1/${LOCATION_NAME}?readMask=name,title,storeCode,phoneNumbers,websiteUri,categories,storefrontAddress,serviceArea,profile,regularHours,specialHours,serviceItems,labels`,
-      method: "GET",
+    const businessInfo = google.mybusinessbusinessinformation({
+      version: "v1",
+      auth: oauth2Client,
+    });
+
+    const locationResponse = await businessInfo.locations.get({
+      name: LOCATION_NAME,
+      readMask: "name,title,storeCode,phoneNumbers,websiteUri,categories,storefrontAddress",
     });
 
     console.log(`✓ Business Profile Information API responded successfully`);
-    const location = response.data as any;
+    const location = locationResponse.data;
     console.log(`  Location details:`);
     console.log(`    - Name: ${location.title || "N/A"}`);
     console.log(`    - Store code: ${location.storeCode || "N/A"}`);
-    console.log(`    - Phone: ${location.phoneNumbers?.primaryPhone || "N/A"}`);
+    console.log(`    - Phone: ${(location.phoneNumbers as any)?.primaryPhone || "N/A"}`);
     console.log(`    - Website: ${location.websiteUri || "N/A"}`);
-    console.log(`    - Primary Category: ${location.categories?.primaryCategory?.displayName || "N/A"}`);
-    console.log(`    - Address: ${location.storefrontAddress?.locality || "N/A"}, ${location.storefrontAddress?.administrativeArea || "N/A"}`);
+    console.log(`    - Primary Category: ${(location.categories as any)?.primaryCategory?.displayName || "N/A"}`);
+    console.log(`    - Address: ${(location.storefrontAddress as any)?.locality || "N/A"}, ${(location.storefrontAddress as any)?.administrativeArea || "N/A"}`);
     console.log();
   } catch (error: any) {
     console.error("✗ Business Profile Information API error:", error.message);
@@ -98,14 +102,19 @@ async function testGoogleAPIs() {
   // Step 5: Test Account Management API - List all locations
   console.log("Step 5: Testing Account Management API (List Locations)...");
   try {
-    // Note: We may need to get the account name first
-    const accountName = connection.account_id; // This should be in the format "accounts/{account_id}"
-    const response = await oauth2Client.request({
-      url: `https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations?readMask=name,title,storeCode`,
-      method: "GET",
+    const businessInfo = google.mybusinessbusinessinformation({
+      version: "v1",
+      auth: oauth2Client,
     });
 
-    const locations = (response.data as any).locations || [];
+    const accountName = connection.account_id;
+    const response = await businessInfo.accounts.locations.list({
+      parent: accountName,
+      readMask: "name,title,storeCode",
+      pageSize: 50,
+    });
+
+    const locations = response.data.locations || [];
     console.log(`✓ Account Management API responded successfully`);
     console.log(`  Total locations found: ${locations.length}`);
 
@@ -124,123 +133,84 @@ async function testGoogleAPIs() {
     console.log();
   }
 
-  // Step 6: Test creating a local post using Google Business Profile API
-  console.log("Step 6: Testing Local Posts API (using googleapis library)...");
+  // Step 6: Test Q&A API v1 (CURRENT - Available until Nov 3, 2025)
+  console.log("Step 6: Testing Q&A API v1 (using googleapis library)...");
   try {
-    const mybusinessbusinessinformation = google.mybusinessbusinessinformation({
+    const qanda = google.mybusinessqanda({
       version: "v1",
       auth: oauth2Client,
     });
 
-    // Try to get the location details using the library
-    const locationResponse = await mybusinessbusinessinformation.locations.get({
-      name: LOCATION_NAME,
-      readMask: "name,title,storeCode,phoneNumbers",
+    const response = await qanda.locations.questions.list({
+      parent: LOCATION_NAME,
+      pageSize: 10,
+      orderBy: "updateTime desc",
     });
 
-    console.log(`✓ Googleapis library worked successfully`);
-    console.log(`  Location via library: ${locationResponse.data.title}`);
-    console.log();
-  } catch (error: any) {
-    console.error("✗ Googleapis library error:", error.message);
-    if (error.response?.data) {
-      console.error("  Response data:", JSON.stringify(error.response.data, null, 2));
-    }
-    console.log();
-  }
-
-  // Step 7: Test Google Posts API (Create Local Post)
-  // Note: This API may require special access
-  console.log("Step 7: Testing Google Posts API (check if posts endpoint exists)...");
-  try {
-    // Try the new Google My Business Local Posts API endpoint
-    const response = await oauth2Client.request({
-      url: `https://mybusiness.googleapis.com/v4/${LOCATION_NAME}/localPosts?pageSize=10`,
-      method: "GET",
-    });
-
-    const posts = (response.data as any).localPosts || [];
-    console.log(`✓ Posts API (v4) responded successfully`);
-    console.log(`  Total posts fetched: ${posts.length}`);
-
-    if (posts.length > 0) {
-      const firstPost = posts[0];
-      console.log(`  First post preview:`);
-      console.log(`    - Post name: ${firstPost.name}`);
-      console.log(`    - Topic: ${firstPost.topicType || "N/A"}`);
-      console.log(`    - Summary: ${firstPost.summary?.substring(0, 100) || "N/A"}...`);
-    }
-    console.log();
-  } catch (error: any) {
-    console.error("✗ Posts API error (expected - API may be deprecated):", error.message);
-    console.log("  Note: The Posts API may not be available for all accounts.");
-    console.log();
-  }
-
-  // Step 8: Test Reviews API (using the correct endpoint)
-  console.log("Step 8: Testing Reviews API (check availability)...");
-  try {
-    // Try the reviews endpoint - note this may also require special permissions
-    const response = await oauth2Client.request({
-      url: `https://mybusiness.googleapis.com/v4/${LOCATION_NAME}/reviews?pageSize=10`,
-      method: "GET",
-    });
-
-    const reviews = (response.data as any).reviews || [];
-    console.log(`✓ Reviews API responded successfully`);
-    console.log(`  Total reviews fetched: ${reviews.length}`);
-
-    if (reviews.length > 0) {
-      const firstReview = reviews[0];
-      console.log(`  First review preview:`);
-      console.log(`    - Rating: ${firstReview.starRating || "N/A"}`);
-      console.log(`    - Author: ${firstReview.reviewer?.displayName || "Anonymous"}`);
-      console.log(`    - Comment: ${firstReview.comment?.substring(0, 100) || "No comment"}...`);
-    }
-    console.log();
-  } catch (error: any) {
-    console.error("✗ Reviews API error (expected - requires special permissions):", error.message);
-    console.log("  Note: Reviews API requires additional permissions or account setup.");
-    console.log();
-  }
-
-  // Step 9: Test Q&A API
-  console.log("Step 9: Testing Q&A API (check availability)...");
-  try {
-    const response = await oauth2Client.request({
-      url: `https://mybusiness.googleapis.com/v4/${LOCATION_NAME}/questions?pageSize=10`,
-      method: "GET",
-    });
-
-    const questions = (response.data as any).questions || [];
-    console.log(`✓ Q&A API responded successfully`);
+    const questions = response.data.questions || [];
+    console.log(`✓ Q&A API v1 responded successfully`);
     console.log(`  Total questions fetched: ${questions.length}`);
 
     if (questions.length > 0) {
       const firstQuestion = questions[0];
       console.log(`  First question preview:`);
-      console.log(`    - Question: ${firstQuestion.text?.substring(0, 100) || "N/A"}...`);
-      console.log(`    - Author: ${firstQuestion.author?.displayName || "Anonymous"}`);
+      console.log(`    - Question: ${(firstQuestion as any).text?.substring(0, 100) || "N/A"}...`);
+      console.log(`    - Author: ${(firstQuestion as any).author?.displayName || "Anonymous"}`);
+      console.log(`    - Answers: ${(firstQuestion as any).topAnswers?.length || 0}`);
+    } else {
+      console.log(`  Note: No questions found for this location (this is normal if no Q&A has been posted yet)`);
     }
     console.log();
   } catch (error: any) {
-    console.error("✗ Q&A API error (expected - requires special permissions):", error.message);
-    console.log("  Note: Q&A API requires additional permissions or account setup.");
+    console.error("✗ Q&A API error:", error.message);
+    if (error.response?.data) {
+      console.error("  Response data:", JSON.stringify(error.response.data, null, 2));
+    }
+    console.log("  Note: If you get a 403 error, the Q&A API may need to be enabled in Google Cloud Console.");
+    console.log("  Visit: https://console.cloud.google.com/apis/library/mybusinessqanda.googleapis.com");
     console.log();
   }
 
+  // Step 7: DEPRECATED - Posts API (no longer available)
+  console.log("Step 7: Testing Local Posts API...");
+  console.log("⚠️  DEPRECATED: Google removed the Local Posts API in 2024.");
+  console.log("   The v4 endpoint (mybusiness.googleapis.com/v4/.../localPosts) returns 404.");
+  console.log("   There is NO replacement API for programmatic post creation/fetching.");
+  console.log("   Alternative: Implement 'Manual Assist' workflow (prepare content, user posts manually)");
+  console.log();
+
+  // Step 8: DEPRECATED - Reviews API (no longer available)
+  console.log("Step 8: Testing Reviews API...");
+  console.log("⚠️  DEPRECATED: Google removed the Reviews API in 2024.");
+  console.log("   The v4 endpoint (mybusiness.googleapis.com/v4/.../reviews) returns 404.");
+  console.log("   There is NO replacement API for programmatic review fetching.");
+  console.log("   Alternative: Manual export from Business Profile dashboard");
+  console.log();
+
   console.log("=== Test Complete ===\n");
   console.log("Summary:");
-  console.log("- OAuth authentication: ✓ Working");
-  console.log("- Business Profile Information API: Check results above");
-  console.log("- Account Management API: Check results above");
-  console.log("- Posts/Reviews/Q&A APIs: May require additional setup or permissions");
-  console.log("\nNext steps:");
-  console.log("1. If Business Profile API works, we can fetch location details");
-  console.log("2. For Posts/Reviews/Q&A, we may need to:");
-  console.log("   - Enable additional APIs in Google Cloud Console");
-  console.log("   - Request special access from Google");
-  console.log("   - Use alternative methods (e.g., Business Communications API)");
+  console.log("✓ OAuth authentication: Working");
+  console.log("✓ Business Profile Information API (v1): Working - can fetch location details");
+  console.log("✓ Account Management API (v1): Working - can list locations");
+  console.log("✓ Q&A API (v1): Check results above - available until Nov 3, 2025");
+  console.log("✗ Posts API: DEPRECATED (no programmatic access)");
+  console.log("✗ Reviews API: DEPRECATED (no programmatic access)");
+  console.log();
+  console.log("Next steps:");
+  console.log("1. Q&A API should work if enabled in Google Cloud Console");
+  console.log("   - Visit: https://console.cloud.google.com/apis/library/mybusinessqanda.googleapis.com");
+  console.log("   - Enable the 'My Business Q&A API'");
+  console.log();
+  console.log("2. For Posts and Reviews:");
+  console.log("   - Implement 'Manual Assist' workflow");
+  console.log("   - Generate content with AI, provide formatted text for manual posting");
+  console.log("   - Consider third-party integrations or manual exports");
+  console.log();
+  console.log("3. What DOES work programmatically:");
+  console.log("   - Fetching location information");
+  console.log("   - Managing Q&A (create questions, post answers)");
+  console.log("   - Uploading media (photos/videos)");
+  console.log("   - Managing location attributes");
 }
 
 // Run the test

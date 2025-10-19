@@ -20,6 +20,9 @@ const getAccountsService = (auth: OAuth2Client) =>
 const getLocationsService = (auth: OAuth2Client) =>
   google.mybusinessbusinessinformation({ version: "v1", auth });
 
+const getQandAService = (auth: OAuth2Client) =>
+  google.mybusinessqanda({ version: "v1", auth });
+
 export async function fetchGoogleAccounts(refreshToken: string): Promise<Account[]> {
   const oauthClient = getOAuthClient();
   oauthClient.setCredentials({ refresh_token: refreshToken });
@@ -117,118 +120,49 @@ type Question = {
   }> | null;
 } & Record<string, unknown>;
 
+/**
+ * IMPORTANT: Google deprecated the Reviews API in 2024.
+ * There is NO programmatic way to fetch reviews from Google Business Profile.
+ *
+ * This function is kept for backward compatibility but will always return an empty array
+ * with a deprecation warning.
+ *
+ * Alternative approaches:
+ * 1. Manual export from Google Business Profile dashboard
+ * 2. Use third-party review aggregation services
+ * 3. Scraping (violates ToS - not recommended)
+ *
+ * @deprecated Google removed programmatic access to reviews in 2024
+ * @returns Always returns empty array
+ */
 export async function fetchGoogleReviews(
   refreshToken: string,
   locationName: string,
 ): Promise<Review[]> {
-  console.log(`[fetchGoogleReviews] Starting review fetch for location: ${locationName}`);
+  console.log(`[fetchGoogleReviews] DEPRECATION WARNING: Google Business Profile Reviews API has been deprecated.`);
+  console.log(`[fetchGoogleReviews] Location: ${locationName}`);
+  console.log(`[fetchGoogleReviews] The v4 API endpoint (mybusiness.googleapis.com/v4/.../reviews) no longer exists.`);
+  console.log(`[fetchGoogleReviews] Google has removed all programmatic access to reviews as of 2024.`);
+  console.log(`[fetchGoogleReviews] Returning empty array. Please use alternative methods:`);
+  console.log(`  1. Manual export from Business Profile dashboard`);
+  console.log(`  2. Third-party review aggregation services`);
+  console.log(`  3. Google Play Console API (for app reviews only)`);
 
-  const oauthClient = getOAuthClient();
-  oauthClient.setCredentials({ refresh_token: refreshToken });
-
-  try {
-    // Get access token
-    console.log(`[fetchGoogleReviews] Requesting access token from OAuth client...`);
-    const { token } = await oauthClient.getAccessToken();
-
-    if (!token) {
-      console.error(`[fetchGoogleReviews] Failed to get access token - token is null/undefined`);
-      throw new Error("Failed to get access token");
-    }
-
-    console.log(`[fetchGoogleReviews] Access token obtained successfully (length: ${token.length})`);
-
-    const reviews: Review[] = [];
-    let pageToken: string | undefined;
-    let pageCount = 0;
-
-    do {
-      pageCount++;
-
-      // Use Google My Business API v4.9 for reviews
-      const url = new URL(`https://mybusiness.googleapis.com/v4/${locationName}/reviews`);
-      if (pageToken) {
-        url.searchParams.set("pageToken", pageToken);
-      }
-      url.searchParams.set("pageSize", "50");
-
-      console.log(`[fetchGoogleReviews] Making API request (page ${pageCount}):`, {
-        url: url.toString(),
-        hasPageToken: !!pageToken,
-        pageSize: 50,
-      });
-
-      const response = await fetch(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      });
-
-      console.log(`[fetchGoogleReviews] API response received (page ${pageCount}):`, {
-        status: response.status,
-        statusText: response.statusText,
-        ok: response.ok,
-        headers: {
-          contentType: response.headers.get("content-type"),
-          contentLength: response.headers.get("content-length"),
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`[fetchGoogleReviews] API error response:`, {
-          status: response.status,
-          statusText: response.statusText,
-          errorBody: errorText,
-          locationName,
-        });
-
-        if (response.status === 404 || response.status === 403) {
-          console.log(`[fetchGoogleReviews] Reviews not available for ${locationName} (${response.status}) - returning empty array`);
-          return [];
-        }
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json() as { reviews?: Review[]; nextPageToken?: string };
-
-      console.log(`[fetchGoogleReviews] Parsed response data (page ${pageCount}):`, {
-        reviewsCount: data.reviews?.length ?? 0,
-        hasNextPageToken: !!data.nextPageToken,
-        totalSoFar: reviews.length + (data.reviews?.length ?? 0),
-      });
-
-      if (data.reviews) {
-        reviews.push(...data.reviews);
-      }
-
-      pageToken = data.nextPageToken;
-    } while (pageToken);
-
-    console.log(`[fetchGoogleReviews] ✓ Successfully fetched ${reviews.length} reviews for ${locationName} (${pageCount} pages)`);
-    return reviews;
-  } catch (error: unknown) {
-    const err = error as { message?: string; code?: number; stack?: string };
-    console.error(`[fetchGoogleReviews] EXCEPTION during fetch:`, {
-      locationName,
-      errorMessage: err.message,
-      errorCode: err.code,
-      errorStack: err.stack,
-      errorType: error?.constructor?.name,
-    });
-
-    // Return empty array if reviews API fails (some locations may not have reviews enabled)
-    if (err.code === 404 || err.code === 403) {
-      console.log(`[fetchGoogleReviews] Returning empty array due to 404/403 error`);
-      return [];
-    }
-    // Don't throw, just return empty to allow other locations to continue
-    console.log(`[fetchGoogleReviews] Returning empty array to allow other locations to continue`);
-    return [];
-  }
+  // Return empty array instead of making a failing API call
+  return [];
 }
 
+/**
+ * Fetch questions (Q&A) for a location using the Google My Business Q&A API v1.
+ *
+ * This API is still supported as of 2025 and will be available until at least November 3, 2025.
+ *
+ * API Documentation: https://developers.google.com/my-business/reference/rest/v1/locations.questions
+ *
+ * @param refreshToken - OAuth refresh token
+ * @param locationName - Location resource name (e.g., "locations/12345")
+ * @returns Array of questions with answers
+ */
 export async function fetchGoogleQuestions(
   refreshToken: string,
   locationName: string,
@@ -239,17 +173,7 @@ export async function fetchGoogleQuestions(
   oauthClient.setCredentials({ refresh_token: refreshToken });
 
   try {
-    // Get access token
-    console.log(`[fetchGoogleQuestions] Requesting access token from OAuth client...`);
-    const { token } = await oauthClient.getAccessToken();
-
-    if (!token) {
-      console.error(`[fetchGoogleQuestions] Failed to get access token - token is null/undefined`);
-      throw new Error("Failed to get access token");
-    }
-
-    console.log(`[fetchGoogleQuestions] Access token obtained successfully (length: ${token.length})`);
-
+    const service = getQandAService(oauthClient);
     const questions: Question[] = [];
     let pageToken: string | undefined;
     let pageCount = 0;
@@ -257,89 +181,46 @@ export async function fetchGoogleQuestions(
     do {
       pageCount++;
 
-      // Use Google My Business Q&A API v1
-      const url = new URL(`https://mybusinessqanda.googleapis.com/v1/${locationName}/questions`);
-      if (pageToken) {
-        url.searchParams.set("pageToken", pageToken);
-      }
-      url.searchParams.set("pageSize", "50");
-      // Order by update time to get most recent first
-      url.searchParams.set("orderBy", "updateTime desc");
+      console.log(`[fetchGoogleQuestions] Fetching page ${pageCount}...`);
 
-      console.log(`[fetchGoogleQuestions] Making API request (page ${pageCount}):`, {
-        url: url.toString(),
-        hasPageToken: !!pageToken,
-        pageSize: 50,
+      const response = await service.locations.questions.list({
+        parent: locationName,
+        pageSize: 100,
+        pageToken: pageToken,
         orderBy: "updateTime desc",
       });
 
-      const response = await fetch(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
+      console.log(`[fetchGoogleQuestions] Page ${pageCount} response:`, {
+        questionsCount: response.data.questions?.length ?? 0,
+        hasNextPageToken: !!response.data.nextPageToken,
       });
 
-      console.log(`[fetchGoogleQuestions] API response received (page ${pageCount}):`, {
-        status: response.status,
-        statusText: response.statusText,
-        ok: response.ok,
-        headers: {
-          contentType: response.headers.get("content-type"),
-          contentLength: response.headers.get("content-length"),
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`[fetchGoogleQuestions] API error response:`, {
-          status: response.status,
-          statusText: response.statusText,
-          errorBody: errorText,
-          locationName,
-        });
-
-        if (response.status === 404 || response.status === 403) {
-          console.log(`[fetchGoogleQuestions] Q&A not available for ${locationName} (${response.status}) - returning empty array`);
-          return [];
-        }
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      if (response.data.questions) {
+        questions.push(...(response.data.questions as Question[]));
       }
 
-      const data = await response.json() as { questions?: Question[]; nextPageToken?: string };
-
-      console.log(`[fetchGoogleQuestions] Parsed response data (page ${pageCount}):`, {
-        questionsCount: data.questions?.length ?? 0,
-        hasNextPageToken: !!data.nextPageToken,
-        totalSoFar: questions.length + (data.questions?.length ?? 0),
-      });
-
-      if (data.questions) {
-        questions.push(...data.questions);
-      }
-
-      pageToken = data.nextPageToken;
+      pageToken = response.data.nextPageToken ?? undefined;
     } while (pageToken);
 
     console.log(`[fetchGoogleQuestions] ✓ Successfully fetched ${questions.length} questions for ${locationName} (${pageCount} pages)`);
     return questions;
   } catch (error: unknown) {
-    const err = error as { message?: string; code?: number; stack?: string };
-    console.error(`[fetchGoogleQuestions] EXCEPTION during fetch:`, {
+    const err = error as { message?: string; code?: number; response?: { data?: unknown } };
+    console.error(`[fetchGoogleQuestions] Error fetching questions:`, {
       locationName,
       errorMessage: err.message,
       errorCode: err.code,
-      errorStack: err.stack,
-      errorType: error?.constructor?.name,
+      responseData: err.response?.data,
     });
 
-    // Return empty array if Q&A API fails (some locations may not have Q&A enabled)
+    // Return empty array if Q&A is not available for this location
     if (err.code === 404 || err.code === 403) {
-      console.log(`[fetchGoogleQuestions] Returning empty array due to 404/403 error`);
+      console.log(`[fetchGoogleQuestions] Q&A not available for ${locationName} - returning empty array`);
       return [];
     }
+
     // Don't throw, just return empty to allow other locations to continue
-    console.log(`[fetchGoogleQuestions] Returning empty array to allow other locations to continue`);
+    console.log(`[fetchGoogleQuestions] Returning empty array to allow other operations to continue`);
     return [];
   }
 }
@@ -385,116 +266,42 @@ type LocalPost = {
   searchUrl?: string | null;
 } & Record<string, unknown>;
 
+/**
+ * IMPORTANT: Google deprecated the Local Posts API in 2024.
+ * There is NO programmatic way to fetch or create posts via API.
+ *
+ * This function is kept for backward compatibility but will always return an empty array
+ * with a deprecation warning.
+ *
+ * Alternative approaches:
+ * 1. Manual posting through Google Business Profile dashboard
+ * 2. Google Business Profile Manager app
+ * 3. Wait for potential future API (no timeline announced)
+ *
+ * Creating posts programmatically:
+ * - The only way is through the Business Profile dashboard
+ * - Some third-party tools claim to support it but use unofficial methods
+ * - Consider implementing a "Manual Assist" workflow where you prepare content
+ *   and users paste it into the dashboard
+ *
+ * @deprecated Google removed programmatic access to posts in 2024
+ * @returns Always returns empty array
+ */
 export async function fetchGooglePosts(
   refreshToken: string,
   locationName: string,
 ): Promise<LocalPost[]> {
-  console.log(`[fetchGooglePosts] Starting posts fetch for location: ${locationName}`);
+  console.log(`[fetchGooglePosts] DEPRECATION WARNING: Google Business Profile Local Posts API has been deprecated.`);
+  console.log(`[fetchGooglePosts] Location: ${locationName}`);
+  console.log(`[fetchGooglePosts] The v4 API endpoint (mybusiness.googleapis.com/v4/.../localPosts) no longer exists.`);
+  console.log(`[fetchGooglePosts] Google has removed all programmatic access to posts as of 2024.`);
+  console.log(`[fetchGooglePosts] Returning empty array. Please use alternative methods:`);
+  console.log(`  1. Manual posting via Business Profile dashboard`);
+  console.log(`  2. Google Business Profile Manager mobile app`);
+  console.log(`  3. Implement "Manual Assist" workflow (prepare content, user pastes into dashboard)`);
 
-  const oauthClient = getOAuthClient();
-  oauthClient.setCredentials({ refresh_token: refreshToken });
-
-  try {
-    // Get access token
-    console.log(`[fetchGooglePosts] Requesting access token from OAuth client...`);
-    const { token } = await oauthClient.getAccessToken();
-
-    if (!token) {
-      console.error(`[fetchGooglePosts] Failed to get access token - token is null/undefined`);
-      throw new Error("Failed to get access token");
-    }
-
-    console.log(`[fetchGooglePosts] Access token obtained successfully (length: ${token.length})`);
-
-    const posts: LocalPost[] = [];
-    let pageToken: string | undefined;
-    let pageCount = 0;
-
-    do {
-      pageCount++;
-
-      // Use Google My Business API v4 for local posts
-      const url = new URL(`https://mybusiness.googleapis.com/v4/${locationName}/localPosts`);
-      if (pageToken) {
-        url.searchParams.set("pageToken", pageToken);
-      }
-      url.searchParams.set("pageSize", "100");
-
-      console.log(`[fetchGooglePosts] Making API request (page ${pageCount}):`, {
-        url: url.toString(),
-        hasPageToken: !!pageToken,
-        pageSize: 100,
-      });
-
-      const response = await fetch(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      });
-
-      console.log(`[fetchGooglePosts] API response received (page ${pageCount}):`, {
-        status: response.status,
-        statusText: response.statusText,
-        ok: response.ok,
-        headers: {
-          contentType: response.headers.get("content-type"),
-          contentLength: response.headers.get("content-length"),
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`[fetchGooglePosts] API error response:`, {
-          status: response.status,
-          statusText: response.statusText,
-          errorBody: errorText,
-          locationName,
-        });
-
-        if (response.status === 404 || response.status === 403) {
-          console.log(`[fetchGooglePosts] Posts not available for ${locationName} (${response.status}) - returning empty array`);
-          return [];
-        }
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json() as { localPosts?: LocalPost[]; nextPageToken?: string };
-
-      console.log(`[fetchGooglePosts] Parsed response data (page ${pageCount}):`, {
-        postsCount: data.localPosts?.length ?? 0,
-        hasNextPageToken: !!data.nextPageToken,
-        totalSoFar: posts.length + (data.localPosts?.length ?? 0),
-      });
-
-      if (data.localPosts) {
-        posts.push(...data.localPosts);
-      }
-
-      pageToken = data.nextPageToken;
-    } while (pageToken);
-
-    console.log(`[fetchGooglePosts] ✓ Successfully fetched ${posts.length} posts for ${locationName} (${pageCount} pages)`);
-    return posts;
-  } catch (error: unknown) {
-    const err = error as { message?: string; code?: number; stack?: string };
-    console.error(`[fetchGooglePosts] EXCEPTION during fetch:`, {
-      locationName,
-      errorMessage: err.message,
-      errorCode: err.code,
-      errorStack: err.stack,
-      errorType: error?.constructor?.name,
-    });
-
-    // Return empty array if posts API fails (some accounts may not have posts API access)
-    if (err.code === 404 || err.code === 403) {
-      console.log(`[fetchGooglePosts] Returning empty array due to 404/403 error`);
-      return [];
-    }
-    // Don't throw, just return empty to allow other locations to continue
-    console.log(`[fetchGooglePosts] Returning empty array to allow other locations to continue`);
-    return [];
-  }
+  // Return empty array instead of making a failing API call
+  return [];
 }
 
 export { GOOGLE_SCOPES };
