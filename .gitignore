@@ -123,3 +123,6 @@ playwright/.cache/
 
 # Turbo
 .turbo
+
+# MCP configuration files (contain API keys)
+.mcp.json
