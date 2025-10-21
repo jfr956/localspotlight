@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { isRedirectError } from "next/dist/client/components/redirect";
 import type { Database } from "@/types/database";
 import {
   fetchGoogleLocations,
@@ -276,12 +275,12 @@ export async function syncReviewsAndQAAction(formData: FormData) {
 
   console.log("[MEMBERSHIP] User authorized with role:", membershipData.role);
 
-  // Get all managed locations for this org
+  // Get all managed locations for this org with their account info
   console.log("[LOCATIONS] Fetching managed locations for org:", orgId);
 
   const locationsQuery = await serviceRole
     .from("gbp_locations")
-    .select("id, google_location_name, org_id")
+    .select("id, google_location_name, org_id, account_id, gbp_accounts!inner(google_account_name)")
     .eq("org_id", orgId)
     .eq("is_managed", true);
 
@@ -292,6 +291,7 @@ export async function syncReviewsAndQAAction(formData: FormData) {
     locations: locationsQuery.data?.map((loc) => ({
       id: loc.id,
       googleName: loc.google_location_name,
+      accountInfo: loc.gbp_accounts,
     })),
   });
 
@@ -372,6 +372,43 @@ export async function syncReviewsAndQAAction(formData: FormData) {
         id: location.id,
         googleLocationName: location.google_location_name,
         orgId: location.org_id,
+        accountId: location.account_id,
+        accountInfo: location.gbp_accounts,
+      });
+
+      // Get accountId from the joined gbp_accounts table
+      const accountRecord = Array.isArray(location.gbp_accounts) ? location.gbp_accounts[0] : location.gbp_accounts;
+      const googleAccountName = accountRecord?.google_account_name;
+
+      if (!googleAccountName) {
+        console.error(`[LOCATION] No google_account_name found for location ${location.google_location_name}`);
+        errors.push(`No account found for location ${location.google_location_name}`);
+        continue;
+      }
+
+      // Extract accountId from google_account_name (format: accounts/{accountId})
+      const accountMatch = googleAccountName.match(/accounts\/([^/]+)/);
+      if (!accountMatch) {
+        console.error(`[LOCATION] Invalid google_account_name format: ${googleAccountName}`);
+        errors.push(`Invalid account name format: ${googleAccountName}`);
+        continue;
+      }
+      const accountId = accountMatch[1];
+
+      // Extract locationId from google_location_name (format: locations/{locationId})
+      const locationMatch = location.google_location_name?.match(/locations\/([^/]+)/);
+      if (!locationMatch) {
+        console.error(`[LOCATION] Invalid google_location_name format: ${location.google_location_name}`);
+        errors.push(`Invalid location name format for ${location.google_location_name}`);
+        continue;
+      }
+      const locationId = locationMatch[1];
+
+      console.log(`[LOCATION] Parsed IDs:`, {
+        accountId,
+        locationId,
+        googleAccountName,
+        googleLocationName: location.google_location_name,
       });
 
       // ========================================
@@ -379,10 +416,10 @@ export async function syncReviewsAndQAAction(formData: FormData) {
       // ========================================
       console.log(`\n[REVIEWS] Fetching reviews for ${location.google_location_name}`);
       try {
-        console.log(`[REVIEWS] API Call: fetchGoogleReviews(refreshToken, "${location.google_location_name}")`);
+        console.log(`[REVIEWS] API Call: fetchGoogleReviews(refreshToken, "${accountId}", "${locationId}")`);
 
         const reviewsStartTime = Date.now();
-        const reviews = await fetchGoogleReviews(refreshToken, location.google_location_name);
+        const reviews = await fetchGoogleReviews(refreshToken, accountId, locationId);
         const reviewsEndTime = Date.now();
 
         console.log(`[REVIEWS] API Response received in ${reviewsEndTime - reviewsStartTime}ms:`, {
@@ -574,10 +611,10 @@ export async function syncReviewsAndQAAction(formData: FormData) {
       // ========================================
       console.log(`\n[POSTS] Fetching posts for ${location.google_location_name}`);
       try {
-        console.log(`[POSTS] API Call: fetchGooglePosts(refreshToken, "${location.google_location_name}")`);
+        console.log(`[POSTS] API Call: fetchGooglePosts(refreshToken, "${accountId}", "${locationId}")`);
 
         const postsStartTime = Date.now();
-        const posts = await fetchGooglePosts(refreshToken, location.google_location_name);
+        const posts = await fetchGooglePosts(refreshToken, accountId, locationId);
         const postsEndTime = Date.now();
 
         console.log(`[POSTS] API Response received in ${postsEndTime - postsStartTime}ms:`, {
@@ -722,7 +759,10 @@ export async function syncReviewsAndQAAction(formData: FormData) {
     console.log("\n[REDIRECT] Redirecting to success page...");
     redirect(`/integrations/google?orgId=${orgId}&status=content_synced`);
   } catch (error) {
-    if (isRedirectError(error)) {
+    // Check if this is a redirect by examining the error properties
+    // Next.js redirect() throws a special error with NEXT_REDIRECT property
+    if (error && typeof error === 'object' && 'digest' in error &&
+        typeof error.digest === 'string' && error.digest.startsWith('NEXT_REDIRECT')) {
       console.log("[REDIRECT] Redirect error caught (expected behavior), rethrowing");
       throw error;
     }

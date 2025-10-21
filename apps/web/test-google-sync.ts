@@ -133,7 +133,7 @@ async function testGoogleAPIs() {
     console.log();
   }
 
-  // Step 6: Test Q&A API v1 (CURRENT - Available until Nov 3, 2025)
+  // Step 6: Test Q&A API v1 (using googleapis library - for comparison)
   console.log("Step 6: Testing Q&A API v1 (using googleapis library)...");
   try {
     const qanda = google.mybusinessqanda({
@@ -141,15 +141,16 @@ async function testGoogleAPIs() {
       auth: oauth2Client,
     });
 
+    console.log("  Fetching questions with readMask...");
     const response = await qanda.locations.questions.list({
       parent: LOCATION_NAME,
-      pageSize: 10,
-      orderBy: "updateTime desc",
+      readMask: "name,author,text,createTime,topAnswers,totalAnswerCount,updateTime,upvoteCount",
     });
 
     const questions = response.data.questions || [];
-    console.log(`✓ Q&A API v1 responded successfully`);
+    console.log(`✓ Q&A API v1 (googleapis library) responded successfully`);
     console.log(`  Total questions fetched: ${questions.length}`);
+    console.log(`  Total questions available: ${response.data.totalSize || 0}`);
 
     if (questions.length > 0) {
       const firstQuestion = questions[0];
@@ -157,12 +158,83 @@ async function testGoogleAPIs() {
       console.log(`    - Question: ${(firstQuestion as any).text?.substring(0, 100) || "N/A"}...`);
       console.log(`    - Author: ${(firstQuestion as any).author?.displayName || "Anonymous"}`);
       console.log(`    - Answers: ${(firstQuestion as any).topAnswers?.length || 0}`);
+      console.log(`    - Upvotes: ${(firstQuestion as any).upvoteCount || 0}`);
+      console.log(`    - Created: ${(firstQuestion as any).createTime || "N/A"}`);
     } else {
       console.log(`  Note: No questions found for this location (this is normal if no Q&A has been posted yet)`);
     }
     console.log();
   } catch (error: any) {
-    console.error("✗ Q&A API error:", error.message);
+    console.error("✗ Q&A API (googleapis library) error:", error.message);
+    if (error.response?.data) {
+      console.error("  Response data:", JSON.stringify(error.response.data, null, 2));
+    }
+    console.log();
+  }
+
+  // Step 6b: Test Q&A API v1 (using raw fetch via oauth2Client.request)
+  console.log("Step 6b: Testing Q&A API v1 (using raw fetch via oauth2Client.request)...");
+  try {
+    // Approach 1: Without any query params (minimal request)
+    console.log("  Attempt 1: Minimal request (no query params)...");
+    const baseUrl = `https://mybusinessqanda.googleapis.com/v1/${LOCATION_NAME}/questions`;
+
+    const response1 = await oauth2Client.request<{
+      questions?: any[];
+      nextPageToken?: string;
+      totalSize?: number;
+    }>({
+      url: baseUrl,
+      method: 'GET',
+    });
+
+    console.log(`  ✓ Minimal request succeeded!`);
+    console.log(`    - Questions: ${response1.data.questions?.length || 0}`);
+    console.log(`    - Total Size: ${response1.data.totalSize || 0}`);
+    console.log(`    - Next Page Token: ${response1.data.nextPageToken ? 'Yes' : 'No'}`);
+
+    // Display first question if available
+    if (response1.data.questions && response1.data.questions.length > 0) {
+      const firstQ = response1.data.questions[0];
+      console.log(`    - First Question: ${firstQ.text?.substring(0, 80) || 'N/A'}...`);
+    }
+    console.log();
+
+    // Approach 2: With query params (filter, orderBy, pageSize)
+    console.log("  Attempt 2: With query params (filter=*, orderBy=updateTime desc, pageSize=50)...");
+    const params = new URLSearchParams({
+      filter: '*',
+      orderBy: 'updateTime desc',
+      pageSize: '50',
+    });
+    const urlWithParams = `${baseUrl}?${params.toString()}`;
+
+    try {
+      const response2 = await oauth2Client.request<{
+        questions?: any[];
+        nextPageToken?: string;
+        totalSize?: number;
+      }>({
+        url: urlWithParams,
+        method: 'GET',
+      });
+
+      console.log(`  ✓ Request with query params succeeded!`);
+      console.log(`    - Questions: ${response2.data.questions?.length || 0}`);
+      console.log(`    - Total Size: ${response2.data.totalSize || 0}`);
+      console.log(`    - Next Page Token: ${response2.data.nextPageToken ? 'Yes' : 'No'}`);
+      console.log();
+    } catch (error2: any) {
+      console.log(`  ✗ Request with query params failed:`, error2.message);
+      if (error2.response?.data) {
+        console.log(`    Response:`, JSON.stringify(error2.response.data, null, 2));
+      }
+      console.log(`    Note: Query params may not be supported by the Q&A API`);
+      console.log();
+    }
+
+  } catch (error: any) {
+    console.error("✗ Q&A API (raw fetch) error:", error.message);
     if (error.response?.data) {
       console.error("  Response data:", JSON.stringify(error.response.data, null, 2));
     }
@@ -192,25 +264,22 @@ async function testGoogleAPIs() {
   console.log("✓ OAuth authentication: Working");
   console.log("✓ Business Profile Information API (v1): Working - can fetch location details");
   console.log("✓ Account Management API (v1): Working - can list locations");
-  console.log("✓ Q&A API (v1): Check results above - available until Nov 3, 2025");
+  console.log("✓ Q&A API (v1): Check results above");
+  console.log("  - googleapis library approach: See Step 6 results");
+  console.log("  - Raw fetch approach: See Step 6b results");
   console.log("✗ Posts API: DEPRECATED (no programmatic access)");
   console.log("✗ Reviews API: DEPRECATED (no programmatic access)");
   console.log();
+  console.log("Key Findings:");
+  console.log("- Compare Step 6 (googleapis) vs Step 6b (raw fetch) to see which works better");
+  console.log("- If raw fetch succeeds, we should use oauth2Client.request() instead of googleapis library");
+  console.log("- Query params (filter, orderBy, pageSize) may or may not be supported");
+  console.log();
   console.log("Next steps:");
-  console.log("1. Q&A API should work if enabled in Google Cloud Console");
-  console.log("   - Visit: https://console.cloud.google.com/apis/library/mybusinessqanda.googleapis.com");
-  console.log("   - Enable the 'My Business Q&A API'");
+  console.log("1. If Step 6b works, update fetchGoogleQuestions() to use raw fetch permanently");
+  console.log("2. Test pagination with nextPageToken if available");
+  console.log("3. Implement error handling for different response codes");
   console.log();
-  console.log("2. For Posts and Reviews:");
-  console.log("   - Implement 'Manual Assist' workflow");
-  console.log("   - Generate content with AI, provide formatted text for manual posting");
-  console.log("   - Consider third-party integrations or manual exports");
-  console.log();
-  console.log("3. What DOES work programmatically:");
-  console.log("   - Fetching location information");
-  console.log("   - Managing Q&A (create questions, post answers)");
-  console.log("   - Uploading media (photos/videos)");
-  console.log("   - Managing location attributes");
 }
 
 // Run the test

@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createServerComponentClientWithAuth } from "@/lib/supabase";
-import { startPostGenerationAction, createManualPostAction } from "./actions";
 import { AiGenerationPanel } from "./sections/AiGenerationPanel";
+import { PostComposeForm } from "./components/PostComposeForm";
 
 export const metadata = {
   title: "Create Post • LocalSpotlight",
@@ -36,6 +36,12 @@ const statusMessages: Record<
     tone: "error",
     title: "Image URL is invalid",
     description: "Provide a valid image URL or leave the field blank to continue without media.",
+  },
+  image_too_large: {
+    tone: "error",
+    title: "Image is too large",
+    description:
+      "We compress images to stay under 900 KB for publishing. Please upload a smaller image or compress it before trying again.",
   },
   create_failed: {
     tone: "error",
@@ -141,157 +147,11 @@ export default async function NewLocationPostPage({ params, searchParams }: NewP
   };
 
   const composeForm = (
-    <form action={createManualPostAction} className="space-y-8">
-      <input type="hidden" name="locationId" value={location.id} />
-      <section className="space-y-4">
-        <div>
-          <label htmlFor="postType" className="block text-sm font-medium text-slate-300">
-            Post type
-          </label>
-          <p className="text-xs text-slate-500">
-            Choose the Google post format that best matches your announcement.
-          </p>
-          <select
-            id="postType"
-            name="postType"
-            className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-            defaultValue="WHATS_NEW"
-          >
-            <option value="WHATS_NEW">What&apos;s New</option>
-            <option value="EVENT">Event</option>
-            <option value="OFFER">Offer</option>
-          </select>
-        </div>
-
-        <div>
-          <label htmlFor="title" className="block text-sm font-medium text-slate-300">
-            Headline
-          </label>
-          <p className="text-xs text-slate-500">Up to 58 characters work best in Google.</p>
-          <input
-            id="title"
-            name="title"
-            type="text"
-            required
-            maxLength={80}
-            placeholder="Headline shown to customers"
-            className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="description" className="block text-sm font-medium text-slate-300">
-            Body copy
-          </label>
-          <p className="text-xs text-slate-500">Tell customers what is new in 750 characters or less.</p>
-          <textarea
-            id="description"
-            name="description"
-            required
-            rows={6}
-            placeholder="Share important details, offers, or event highlights..."
-            className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-          />
-        </div>
-      </section>
-
-      <section className="grid gap-6 md:grid-cols-2">
-        <div className="space-y-3">
-          <div>
-            <label htmlFor="publishDate" className="block text-sm font-medium text-slate-300">
-              Publish date
-            </label>
-            <input
-              id="publishDate"
-              name="publishDate"
-              type="date"
-              defaultValue={defaultDate}
-              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-            />
-          </div>
-          <div>
-            <label htmlFor="publishTime" className="block text-sm font-medium text-slate-300">
-              Publish time
-            </label>
-            <input
-              id="publishTime"
-              name="publishTime"
-              type="time"
-              defaultValue={defaultTime}
-              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label htmlFor="ctaAction" className="block text-sm font-medium text-slate-300">
-              Call to action
-            </label>
-            <select
-              id="ctaAction"
-              name="ctaAction"
-              defaultValue=""
-              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-            >
-              <option value="">No button</option>
-              <option value="BOOK">Book</option>
-              <option value="CALL">Call</option>
-              <option value="LEARN_MORE">Learn more</option>
-              <option value="ORDER">Order</option>
-              <option value="SHOP">Shop</option>
-              <option value="SIGN_UP">Sign up</option>
-              <option value="VISIT_WEBSITE">Visit website</option>
-            </select>
-          </div>
-          <div>
-            <label htmlFor="ctaUrl" className="block text-sm font-medium text-slate-300">
-              Call-to-action URL
-            </label>
-            <input
-              id="ctaUrl"
-              name="ctaUrl"
-              type="url"
-              placeholder="https://example.com/offer"
-              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-            />
-          </div>
-          <div>
-            <label htmlFor="imageUrl" className="block text-sm font-medium text-slate-300">
-              Feature image URL
-            </label>
-            <input
-              id="imageUrl"
-              name="imageUrl"
-              type="url"
-              placeholder="https://example.com/image.jpg"
-              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              Optional. Provide a link to an image already hosted online.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <div className="flex items-center justify-end gap-3">
-        <Link
-          href={`/locations/${locationId}?tab=posts`}
-          className="inline-flex items-center justify-center rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-emerald-400 hover:text-emerald-300"
-        >
-          Cancel
-        </Link>
-        <button
-          type="submit"
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400"
-        >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Save and schedule
-        </button>
-      </div>
-    </form>
+    <PostComposeForm
+      locationId={location.id}
+      defaultDate={defaultDate}
+      defaultTime={defaultTime}
+    />
   );
 
   const tabContent = (() => {
@@ -301,9 +161,7 @@ export default async function NewLocationPostPage({ params, searchParams }: NewP
           <div className="rounded-2xl border border-emerald-500/20 bg-slate-900/70">
             <AiGenerationPanel
               locationId={location.id}
-              orgId={location.org_id}
               generationId={generationId}
-              startAction={startPostGenerationAction}
             />
           </div>
         );

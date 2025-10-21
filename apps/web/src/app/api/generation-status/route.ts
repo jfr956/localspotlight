@@ -11,18 +11,20 @@ export async function GET(request: NextRequest) {
 
   const serviceRole = getServiceRoleClient();
 
-  const [{ data: generation, error: generationError }, { data: events, error: eventsError }] =
+  const [{ data: generation, error: generationError }, { data: events }] =
     await Promise.all([
       serviceRole
         .from("ai_generations")
         .select("id, status, model, risk_score, output, created_at")
         .eq("id", generationId)
         .maybeSingle(),
-      serviceRole
-        .from("ai_generation_events")
-        .select("id, level, message, created_at, meta")
-        .eq("generation_id", generationId)
-        .order("created_at", { ascending: true }),
+      // TODO: Re-enable when ai_generation_events table is created
+      // serviceRole
+      //   .from("ai_generation_events")
+      //   .select("id, level, message, created_at, meta")
+      //   .eq("generation_id", generationId)
+      //   .order("created_at", { ascending: true }),
+      Promise.resolve({ data: [], error: null }),
     ]);
 
   if (generationError) {
@@ -33,11 +35,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Generation not found" }, { status: 404 });
   }
 
-  if (eventsError) {
-    return NextResponse.json({ error: eventsError.message }, { status: 500 });
-  }
+  // Events error check removed since events query is temporarily disabled
 
-  return NextResponse.json({ snapshot: generation, events });
+  return NextResponse.json({ snapshot: generation, events: events || [] });
 }
 
 

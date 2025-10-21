@@ -315,12 +315,23 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
-[[cron.jobs]]
-name = "generate_post_candidates"
-schedule = "0 13 * * *"
-request.method = "POST"
-request.url = "http://127.0.0.1:3000/api/automation/generate-posts"
-request.headers.Authorization = "Bearer env(AUTOMATION_CRON_SECRET)"
+# Cron jobs configuration
+# Requires Supabase CLI v2.53.6+ (currently using v2.51.0)
+# For now, use manual trigger scripts or external cron services
+#
+# [[cron.jobs]]
+# name = "generate_post_candidates"
+# schedule = "0 13 * * *"
+# request.method = "POST"
+# request.url = "http://127.0.0.1:3000/api/automation/generate-posts"
+# request.headers.Authorization = "Bearer env(AUTOMATION_CRON_SECRET)"
+#
+# [[cron.jobs]]
+# name = "publish_posts"
+# schedule = "*/5 * * * *"
+# request.method = "POST"
+# request.url = "http://127.0.0.1:54321/functions/v1/publish-posts"
+# request.headers.Authorization = "Bearer env(PUBLISH_POSTS_CRON_SECRET)"
 
 [analytics]
 enabled = true

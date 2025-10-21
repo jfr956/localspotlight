@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createServerComponentClientWithAuth } from "@/lib/supabase";
 import type { Tables } from "@/types/database";
 import Link from "next/link";
+import { cancelScheduleAction } from "./actions";
 
 type Review = Tables<"gbp_reviews">;
 type Schedule = Tables<"schedules">;
@@ -47,6 +48,21 @@ const STATUS_ALERTS: Record<
     title: "You need editor permissions",
     description: "Ask an organization admin to grant editor access before generating posts.",
   },
+  schedule_cancelled: {
+    tone: "success",
+    title: "Schedule cancelled",
+    description: "The scheduled post has been removed from the queue.",
+  },
+  cancel_failed: {
+    tone: "error",
+    title: "Failed to cancel schedule",
+    description: "We encountered an error while cancelling the schedule. Please try again.",
+  },
+  schedule_not_found: {
+    tone: "error",
+    title: "Schedule not found",
+    description: "The scheduled post could not be found. It may have already been published or deleted.",
+  },
 };
 
 interface LocationPageProps {
@@ -77,6 +93,24 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
   const statusKey = typeof searchParamsResolved.status === "string" ? searchParamsResolved.status : null;
   const statusAlert = statusKey ? STATUS_ALERTS[statusKey] : undefined;
 
+  // Pagination for reviews tab
+  const reviewsPage = typeof searchParamsResolved.reviewsPage === "string" ? Number(searchParamsResolved.reviewsPage) : 1;
+  const reviewsPerPage = 5;
+  const reviewsStart = (reviewsPage - 1) * reviewsPerPage;
+  const reviewsEnd = reviewsStart + reviewsPerPage - 1;
+
+  // Pagination for posts tab (scheduled posts)
+  const schedulesPage = typeof searchParamsResolved.schedulesPage === "string" ? Number(searchParamsResolved.schedulesPage) : 1;
+  const schedulesPerPage = 5;
+  const schedulesStart = (schedulesPage - 1) * schedulesPerPage;
+  const schedulesEnd = schedulesStart + schedulesPerPage - 1;
+
+  // Pagination for GBP posts
+  const gbpPostsPage = typeof searchParamsResolved.gbpPostsPage === "string" ? Number(searchParamsResolved.gbpPostsPage) : 1;
+  const gbpPostsPerPage = 5;
+  const gbpPostsStart = (gbpPostsPage - 1) * gbpPostsPerPage;
+  const gbpPostsEnd = gbpPostsStart + gbpPostsPerPage - 1;
+
   const supabase = await createServerComponentClientWithAuth();
   const db = supabase as unknown as { from: typeof supabase.from };
 
@@ -99,25 +133,54 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
   const description = meta?.description as string | undefined;
 
   // Fetch stats
-  const [reviewsResult, schedulesResult, gbpPostsResult, qnaResult, qnaCountResult, schedulesCountResult, gbpPostsCountResult] = await Promise.all([
+  const [reviewsResult, reviewsCountResult, schedulesResult, gbpPostsResult, qnaResult, qnaCountResult, schedulesCountResult, gbpPostsCountResult] = await Promise.all([
+    // Fetch paginated reviews for the reviews tab
+    activeTab === "reviews"
+      ? db
+          .from("gbp_reviews")
+          .select("*")
+          .eq("location_id", locationId)
+          .order("created_at", { ascending: false })
+          .range(reviewsStart, reviewsEnd)
+      : db
+          .from("gbp_reviews")
+          .select("*")
+          .eq("location_id", locationId)
+          .order("created_at", { ascending: false })
+          .limit(3), // Only 3 for overview tab
+    // Get total count of reviews
     db
       .from("gbp_reviews")
-      .select("*")
-      .eq("location_id", locationId)
-      .order("created_at", { ascending: false })
-      .limit(50), // Fetch more for the reviews tab
-    db
-      .from("schedules")
-      .select("*")
-      .eq("location_id", locationId)
-      .order("publish_at", { ascending: false })
-      .limit(50), // Fetch more for posts tab
-    db
-      .from("gbp_posts")
-      .select("*")
-      .eq("location_id", locationId)
-      .order("google_create_time", { ascending: false })
-      .limit(50), // Fetch Google posts
+      .select("id", { count: "exact", head: true })
+      .eq("location_id", locationId),
+    // Fetch paginated schedules for posts tab
+    activeTab === "posts"
+      ? db
+          .from("schedules")
+          .select("*")
+          .eq("location_id", locationId)
+          .order("publish_at", { ascending: false })
+          .range(schedulesStart, schedulesEnd)
+      : db
+          .from("schedules")
+          .select("*")
+          .eq("location_id", locationId)
+          .order("publish_at", { ascending: false })
+          .limit(3), // Only 3 for overview tab
+    // Fetch paginated GBP posts for posts tab
+    activeTab === "posts"
+      ? db
+          .from("gbp_posts")
+          .select("*")
+          .eq("location_id", locationId)
+          .order("google_create_time", { ascending: false })
+          .range(gbpPostsStart, gbpPostsEnd)
+      : db
+          .from("gbp_posts")
+          .select("*")
+          .eq("location_id", locationId)
+          .order("google_create_time", { ascending: false })
+          .limit(3), // Only 3 for overview tab
     db
       .from("gbp_qna")
       .select("*")
@@ -139,12 +202,16 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
   ]);
 
   const recentReviews = (reviewsResult.data as Review[] | null) ?? [];
+  const reviewsCount = reviewsCountResult.count ?? 0;
   const recentSchedules = (schedulesResult.data as Schedule[] | null) ?? [];
   const gbpPosts = (gbpPostsResult.data as GbpPost[] | null) ?? [];
   const qnaItems = (qnaResult.data as QNA[] | null) ?? [];
   const qnaCount = qnaCountResult.count ?? 0;
   const schedulesCount = schedulesCountResult.count ?? 0;
   const gbpPostsCount = gbpPostsCountResult.count ?? 0;
+  const reviewsTotalPages = Math.ceil(reviewsCount / reviewsPerPage);
+  const schedulesTotalPages = Math.ceil(schedulesCount / schedulesPerPage);
+  const gbpPostsTotalPages = Math.ceil(gbpPostsCount / gbpPostsPerPage);
 
   // Calculate average rating
   const reviewsWithRatings = recentReviews.filter((r) => r.rating !== null);
@@ -243,7 +310,7 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
               />
             </svg>
           </div>
-          <p className="mt-3 text-3xl font-semibold text-white">{recentReviews.length}</p>
+          <p className="mt-3 text-3xl font-semibold text-white">{reviewsCount}</p>
           {avgRating > 0 && (
             <p className="mt-1 text-sm text-slate-400">{avgRating.toFixed(1)} avg rating</p>
           )}
@@ -414,13 +481,13 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
         <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-white">All Reviews</h2>
-            {recentReviews.length > 0 && (
+            {reviewsCount > 0 && (
               <div className="text-sm text-slate-400">
-                {reviewsWithRatings.length} reviews • {avgRating.toFixed(1)} avg rating
+                {reviewsCount} reviews • {avgRating.toFixed(1)} avg rating
               </div>
             )}
           </div>
-          {recentReviews.length === 0 ? (
+          {reviewsCount === 0 ? (
             <div className="py-12 text-center">
               <svg
                 className="mx-auto h-12 w-12 text-slate-600"
@@ -444,144 +511,168 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
               </p>
             </div>
           ) : (
-            <ul className="space-y-4">
-              {recentReviews.map((review) => (
-                <li key={review.id} className="rounded-lg border border-slate-800 p-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-white">{review.author}</span>
-                        {review.rating && (
-                          <div className="flex items-center gap-1">
-                            {Array.from({ length: 5 }).map((_, i) => (
-                              <svg
-                                key={i}
-                                className={`h-4 w-4 ${
-                                  i < review.rating! ? "text-yellow-500" : "text-slate-700"
-                                }`}
-                                fill="currentColor"
-                                viewBox="0 0 20 20"
-                              >
-                                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                              </svg>
-                            ))}
+            <>
+              <ul className="space-y-4">
+                {recentReviews.map((review) => (
+                  <li key={review.id} className="rounded-lg border border-slate-800 p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-white">{review.author}</span>
+                          {review.rating && (
+                            <div className="flex items-center gap-1">
+                              {Array.from({ length: 5 }).map((_, i) => (
+                                <svg
+                                  key={i}
+                                  className={`h-4 w-4 ${
+                                    i < review.rating! ? "text-yellow-500" : "text-slate-700"
+                                  }`}
+                                  fill="currentColor"
+                                  viewBox="0 0 20 20"
+                                >
+                                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                </svg>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {review.text && (
+                          <p className="mt-2 text-sm text-slate-300">{review.text}</p>
+                        )}
+                        {review.reply ? (
+                          <div className="mt-3 rounded bg-slate-800/50 p-3">
+                            <p className="text-xs font-medium text-emerald-400 mb-1">Your reply</p>
+                            <p className="text-sm text-slate-400">{review.reply}</p>
                           </div>
+                        ) : (
+                          <button className="mt-3 inline-flex items-center gap-2 rounded-lg border border-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/10">
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+                              />
+                            </svg>
+                            Reply to review
+                          </button>
                         )}
                       </div>
-                      {review.text && (
-                        <p className="mt-2 text-sm text-slate-300">{review.text}</p>
-                      )}
-                      {review.reply ? (
-                        <div className="mt-3 rounded bg-slate-800/50 p-3">
-                          <p className="text-xs font-medium text-emerald-400 mb-1">Your reply</p>
-                          <p className="text-sm text-slate-400">{review.reply}</p>
-                        </div>
-                      ) : (
-                        <button className="mt-3 inline-flex items-center gap-2 rounded-lg border border-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/10">
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-                            />
-                          </svg>
-                          Reply to review
-                        </button>
-                      )}
                     </div>
+                    {review.created_at && (
+                      <p className="mt-3 text-xs text-slate-500">
+                        {new Date(review.created_at).toLocaleDateString("en-US", {
+                          month: "long",
+                          day: "numeric",
+                          year: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+
+              {/* Pagination controls */}
+              {reviewsTotalPages > 1 && (
+              <div className="mt-6 flex items-center justify-between border-t border-slate-800 pt-4">
+                <div className="text-sm text-slate-400">
+                  Showing page {reviewsPage} of {reviewsTotalPages} ({reviewsCount} total reviews)
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/locations/${locationId}?tab=reviews&reviewsPage=${reviewsPage - 1}`}
+                    className={`inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white ${
+                      reviewsPage === 1 ? "pointer-events-none opacity-50" : ""
+                    }`}
+                    aria-disabled={reviewsPage === 1}
+                    tabIndex={reviewsPage === 1 ? -1 : undefined}
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                    Previous
+                  </Link>
+
+                  <div className="flex items-center gap-1">
+                    {/* Show first page */}
+                    {reviewsPage > 2 && (
+                      <>
+                        <Link
+                          href={`/locations/${locationId}?tab=reviews&reviewsPage=1`}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                        >
+                          1
+                        </Link>
+                        {reviewsPage > 3 && <span className="px-2 text-slate-500">...</span>}
+                      </>
+                    )}
+
+                    {/* Show previous page */}
+                    {reviewsPage > 1 && (
+                      <Link
+                        href={`/locations/${locationId}?tab=reviews&reviewsPage=${reviewsPage - 1}`}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                      >
+                        {reviewsPage - 1}
+                      </Link>
+                    )}
+
+                    {/* Current page */}
+                    <div className="inline-flex h-9 w-9 items-center justify-center rounded-md border-2 border-emerald-500 bg-emerald-500/10 text-emerald-400 text-sm font-medium">
+                      {reviewsPage}
+                    </div>
+
+                    {/* Show next page */}
+                    {reviewsPage < reviewsTotalPages && (
+                      <Link
+                        href={`/locations/${locationId}?tab=reviews&reviewsPage=${reviewsPage + 1}`}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                      >
+                        {reviewsPage + 1}
+                      </Link>
+                    )}
+
+                    {/* Show last page */}
+                    {reviewsPage < reviewsTotalPages - 1 && (
+                      <>
+                        {reviewsPage < reviewsTotalPages - 2 && <span className="px-2 text-slate-500">...</span>}
+                        <Link
+                          href={`/locations/${locationId}?tab=reviews&reviewsPage=${reviewsTotalPages}`}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                        >
+                          {reviewsTotalPages}
+                        </Link>
+                      </>
+                    )}
                   </div>
-                  {review.created_at && (
-                    <p className="mt-3 text-xs text-slate-500">
-                      {new Date(review.created_at).toLocaleDateString("en-US", {
-                        month: "long",
-                        day: "numeric",
-                        year: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
+
+                  <Link
+                    href={`/locations/${locationId}?tab=reviews&reviewsPage=${reviewsPage + 1}`}
+                    className={`inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white ${
+                      reviewsPage === reviewsTotalPages ? "pointer-events-none opacity-50" : ""
+                    }`}
+                    aria-disabled={reviewsPage === reviewsTotalPages}
+                    tabIndex={reviewsPage === reviewsTotalPages ? -1 : undefined}
+                  >
+                    Next
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </Link>
+                </div>
+              </div>
+              )}
+            </>
           )}
         </div>
       )}
 
       {activeTab === "posts" && (
         <div className="space-y-6">
-          {/* Google Business Profile Posts */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white">Google Business Profile Posts</h2>
-              {gbpPosts.length > 0 && (
-                <div className="text-sm text-slate-400">{gbpPostsCount} published</div>
-              )}
-            </div>
-
-            {gbpPosts.length === 0 ? (
-              <div className="py-8 text-center">
-                <p className="text-sm text-slate-400">
-                  No posts found. Sync content from Google to see existing posts.
-                </p>
-              </div>
-            ) : (
-              <ul className="space-y-4">
-                {gbpPosts.map((post) => (
-                  <li key={post.id} className="rounded-lg border border-slate-800 p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3">
-                          <span className="font-medium text-white capitalize">
-                            {post.topic_type?.toLowerCase() || "Standard Post"}
-                          </span>
-                          <span className={`rounded-full px-2 py-0.5 text-xs uppercase tracking-wide ${
-                            post.state === "LIVE"
-                              ? "bg-emerald-500/10 text-emerald-400"
-                              : post.state === "EXPIRED"
-                                ? "bg-slate-500/10 text-slate-400"
-                                : "bg-yellow-500/10 text-yellow-400"
-                          }`}>
-                            {post.state || "Unknown"}
-                          </span>
-                        </div>
-
-                        {post.summary && (
-                          <p className="mt-2 text-sm text-slate-300">{post.summary}</p>
-                        )}
-
-                        <div className="mt-2 space-y-1 text-xs text-slate-500">
-                          {post.google_create_time && (
-                            <div>
-                              Published: {new Date(post.google_create_time).toLocaleString()}
-                            </div>
-                          )}
-                          {post.call_to_action_type && (
-                            <div>CTA: {post.call_to_action_type}</div>
-                          )}
-                        </div>
-                      </div>
-                      {post.search_url && (
-                        <a
-                          href={post.search_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="ml-4 text-emerald-400 hover:text-emerald-300"
-                        >
-                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                        </a>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* Scheduled Posts */}
+          {/* Scheduled Posts - Now at the top */}
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-white">Scheduled Posts</h2>
@@ -656,8 +747,9 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
                         <span className="font-medium text-white capitalize">
                           {schedule.target_type.replace("_", " ")}
                         </span>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs uppercase tracking-wide ${
+                        <Link
+                          href="/content"
+                          className={`rounded-full px-2 py-0.5 text-xs uppercase tracking-wide transition hover:opacity-80 ${
                             schedule.status === "pending"
                               ? "bg-yellow-500/10 text-yellow-400"
                               : schedule.status === "published"
@@ -668,11 +760,14 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
                           }`}
                         >
                           {schedule.status}
-                        </span>
+                        </Link>
                         {schedule.target_id && (
-                          <span className="text-xs text-slate-500">
+                          <Link
+                            href="/content"
+                            className="text-xs text-slate-500 hover:text-slate-400 transition"
+                          >
                             ID: {schedule.target_id.substring(0, 8)}...
-                          </span>
+                          </Link>
                         )}
                       </div>
 
@@ -718,18 +813,30 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
 
                       {schedule.status === "pending" && (
                         <div className="mt-3 flex gap-2">
-                          <button className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800">
-                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                            Edit
-                          </button>
-                          <button className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-500/10">
-                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                            Cancel
-                          </button>
+                          {schedule.target_type === "post_candidate" && schedule.target_id && (
+                            <Link
+                              href={`/locations/${locationId}/posts/new?candidateId=${schedule.target_id}`}
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800"
+                            >
+                              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                              </svg>
+                              Edit
+                            </Link>
+                          )}
+                          <form action={cancelScheduleAction}>
+                            <input type="hidden" name="scheduleId" value={schedule.id} />
+                            <input type="hidden" name="locationId" value={locationId} />
+                            <button
+                              type="submit"
+                              className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-500/10"
+                            >
+                              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                              Cancel
+                            </button>
+                          </form>
                         </div>
                       )}
 
@@ -749,6 +856,264 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
               ))}
             </ul>
           )}
+
+          {/* Pagination controls for scheduled posts */}
+          {recentSchedules.length > 0 && (
+            <div className="mt-6 flex items-center justify-between border-t border-slate-800 pt-4">
+              <div className="text-sm text-slate-400">
+                Showing page {schedulesPage} of {schedulesTotalPages} ({schedulesCount} total scheduled posts)
+              </div>
+
+              {schedulesTotalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/locations/${locationId}?tab=posts&schedulesPage=${schedulesPage - 1}`}
+                  className={`inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white ${
+                    schedulesPage === 1 ? "pointer-events-none opacity-50" : ""
+                  }`}
+                  aria-disabled={schedulesPage === 1}
+                  tabIndex={schedulesPage === 1 ? -1 : undefined}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Previous
+                </Link>
+
+                <div className="flex items-center gap-1">
+                  {/* Show first page */}
+                  {schedulesPage > 2 && (
+                    <>
+                      <Link
+                        href={`/locations/${locationId}?tab=posts&schedulesPage=1`}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                      >
+                        1
+                      </Link>
+                      {schedulesPage > 3 && <span className="px-2 text-slate-500">...</span>}
+                    </>
+                  )}
+
+                  {/* Show previous page */}
+                  {schedulesPage > 1 && (
+                    <Link
+                      href={`/locations/${locationId}?tab=posts&schedulesPage=${schedulesPage - 1}`}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                    >
+                      {schedulesPage - 1}
+                    </Link>
+                  )}
+
+                  {/* Current page */}
+                  <div className="inline-flex h-9 w-9 items-center justify-center rounded-md border-2 border-emerald-500 bg-emerald-500/10 text-emerald-400 text-sm font-medium">
+                    {schedulesPage}
+                  </div>
+
+                  {/* Show next page */}
+                  {schedulesPage < schedulesTotalPages && (
+                    <Link
+                      href={`/locations/${locationId}?tab=posts&schedulesPage=${schedulesPage + 1}`}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                    >
+                      {schedulesPage + 1}
+                    </Link>
+                  )}
+
+                  {/* Show last page */}
+                  {schedulesPage < schedulesTotalPages - 1 && (
+                    <>
+                      {schedulesPage < schedulesTotalPages - 2 && <span className="px-2 text-slate-500">...</span>}
+                      <Link
+                        href={`/locations/${locationId}?tab=posts&schedulesPage=${schedulesTotalPages}`}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                      >
+                        {schedulesTotalPages}
+                      </Link>
+                    </>
+                  )}
+                </div>
+
+                <Link
+                  href={`/locations/${locationId}?tab=posts&schedulesPage=${schedulesPage + 1}`}
+                  className={`inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white ${
+                    schedulesPage === schedulesTotalPages ? "pointer-events-none opacity-50" : ""
+                  }`}
+                  aria-disabled={schedulesPage === schedulesTotalPages}
+                  tabIndex={schedulesPage === schedulesTotalPages ? -1 : undefined}
+                >
+                  Next
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              </div>
+              )}
+            </div>
+          )}
+          </div>
+
+          {/* Google Business Profile Posts - Now below scheduled posts */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">Google Business Profile Posts</h2>
+              {gbpPosts.length > 0 && (
+                <div className="text-sm text-slate-400">{gbpPostsCount} published</div>
+              )}
+            </div>
+
+            {gbpPosts.length === 0 ? (
+              <div className="py-8 text-center">
+                <p className="text-sm text-slate-400">
+                  No posts found. Sync content from Google to see existing posts.
+                </p>
+              </div>
+            ) : (
+              <>
+                <ul className="space-y-4">
+                  {gbpPosts.map((post) => (
+                    <li key={post.id} className="rounded-lg border border-slate-800 p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3">
+                            <span className="font-medium text-white capitalize">
+                              {post.topic_type?.toLowerCase() || "Standard Post"}
+                            </span>
+                            <span className={`rounded-full px-2 py-0.5 text-xs uppercase tracking-wide ${
+                              post.state === "LIVE"
+                                ? "bg-emerald-500/10 text-emerald-400"
+                                : post.state === "EXPIRED"
+                                  ? "bg-slate-500/10 text-slate-400"
+                                  : "bg-yellow-500/10 text-yellow-400"
+                            }`}>
+                              {post.state || "Unknown"}
+                            </span>
+                          </div>
+
+                          {post.summary && (
+                            <p className="mt-2 text-sm text-slate-300">{post.summary}</p>
+                          )}
+
+                          <div className="mt-2 space-y-1 text-xs text-slate-500">
+                            {post.google_create_time && (
+                              <div>
+                                Published: {new Date(post.google_create_time).toLocaleString()}
+                              </div>
+                            )}
+                            {post.call_to_action_type && (
+                              <div>CTA: {post.call_to_action_type}</div>
+                            )}
+                          </div>
+                        </div>
+                        {post.search_url && (
+                          <a
+                            href={post.search_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ml-4 text-emerald-400 hover:text-emerald-300"
+                          >
+                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                          </a>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+
+                {/* Pagination controls for GBP posts */}
+                {gbpPostsTotalPages > 1 && (
+                  <div className="mt-6 flex items-center justify-between border-t border-slate-800 pt-4">
+                    <div className="text-sm text-slate-400">
+                      Showing page {gbpPostsPage} of {gbpPostsTotalPages} ({gbpPostsCount} total posts)
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/locations/${locationId}?tab=posts&gbpPostsPage=${gbpPostsPage - 1}`}
+                        className={`inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white ${
+                          gbpPostsPage === 1 ? "pointer-events-none opacity-50" : ""
+                        }`}
+                        aria-disabled={gbpPostsPage === 1}
+                        tabIndex={gbpPostsPage === 1 ? -1 : undefined}
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                        Previous
+                      </Link>
+
+                      <div className="flex items-center gap-1">
+                        {/* Show first page */}
+                        {gbpPostsPage > 2 && (
+                          <>
+                            <Link
+                              href={`/locations/${locationId}?tab=posts&gbpPostsPage=1`}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                            >
+                              1
+                            </Link>
+                            {gbpPostsPage > 3 && <span className="px-2 text-slate-500">...</span>}
+                          </>
+                        )}
+
+                        {/* Show previous page */}
+                        {gbpPostsPage > 1 && (
+                          <Link
+                            href={`/locations/${locationId}?tab=posts&gbpPostsPage=${gbpPostsPage - 1}`}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                          >
+                            {gbpPostsPage - 1}
+                          </Link>
+                        )}
+
+                        {/* Current page */}
+                        <div className="inline-flex h-9 w-9 items-center justify-center rounded-md border-2 border-emerald-500 bg-emerald-500/10 text-emerald-400 text-sm font-medium">
+                          {gbpPostsPage}
+                        </div>
+
+                        {/* Show next page */}
+                        {gbpPostsPage < gbpPostsTotalPages && (
+                          <Link
+                            href={`/locations/${locationId}?tab=posts&gbpPostsPage=${gbpPostsPage + 1}`}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                          >
+                            {gbpPostsPage + 1}
+                          </Link>
+                        )}
+
+                        {/* Show last page */}
+                        {gbpPostsPage < gbpPostsTotalPages - 1 && (
+                          <>
+                            {gbpPostsPage < gbpPostsTotalPages - 2 && <span className="px-2 text-slate-500">...</span>}
+                            <Link
+                              href={`/locations/${locationId}?tab=posts&gbpPostsPage=${gbpPostsTotalPages}`}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white"
+                            >
+                              {gbpPostsTotalPages}
+                            </Link>
+                          </>
+                        )}
+                      </div>
+
+                      <Link
+                        href={`/locations/${locationId}?tab=posts&gbpPostsPage=${gbpPostsPage + 1}`}
+                        className={`inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white ${
+                          gbpPostsPage === gbpPostsTotalPages ? "pointer-events-none opacity-50" : ""
+                        }`}
+                        aria-disabled={gbpPostsPage === gbpPostsTotalPages}
+                        tabIndex={gbpPostsPage === gbpPostsTotalPages ? -1 : undefined}
+                      >
+                        Next
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
