@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ImageUploadSection } from "./ImageUploadSection";
-import { createManualPostAction } from "../actions";
+import { createManualPostAction, createAndPublishNowAction } from "../actions";
 
 interface PostComposeFormProps {
   locationId: string;
@@ -235,10 +235,21 @@ export function PostComposeForm({ locationId, defaultDate, defaultTime }: PostCo
         </Link>
         <button
           type="submit"
+          formAction={createAndPublishNowAction}
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-500/50 bg-slate-900 px-4 py-2 text-sm font-semibold text-emerald-400 transition hover:bg-emerald-500/10"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Publish Now
+        </button>
+        <button
+          type="submit"
           className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400"
         >
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           Save and schedule
         </button>

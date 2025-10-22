@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { createServerComponentClientWithAuth } from "@/lib/supabase";
 import type { Tables } from "@/types/database";
 import Link from "next/link";
-import { cancelScheduleAction, publishNowAction } from "./actions";
+import { cancelScheduleAction } from "./actions";
 
 type Review = Tables<"gbp_reviews">;
 type Schedule = Tables<"schedules">;
@@ -16,7 +16,12 @@ const STATUS_ALERTS: Record<
   post_created: {
     tone: "success",
     title: "Post scheduled",
-    description: "Your draft was added to the queue. We’ll publish it at the scheduled time.",
+    description: "Your draft was added to the queue. We'll publish it at the scheduled time.",
+  },
+  post_publishing_now: {
+    tone: "success",
+    title: "Publishing now",
+    description: "Your post is being published immediately to Google Business Profile.",
   },
   schedule_failed: {
     tone: "error",
@@ -52,11 +57,6 @@ const STATUS_ALERTS: Record<
     tone: "success",
     title: "Schedule cancelled",
     description: "The scheduled post has been removed from the queue.",
-  },
-  publishing_now: {
-    tone: "success",
-    title: "Publishing now",
-    description: "The post is being published immediately to Google Business Profile.",
   },
   cancel_failed: {
     tone: "error",
@@ -840,20 +840,6 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
                               Edit
                             </Link>
                           )}
-                          <form action={publishNowAction}>
-                            <input type="hidden" name="scheduleId" value={schedule.id} />
-                            <input type="hidden" name="locationId" value={locationId} />
-                            <button
-                              type="submit"
-                              className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 px-3 py-1.5 text-xs font-medium text-emerald-400 transition hover:bg-emerald-500/10"
-                            >
-                              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              Publish Now
-                            </button>
-                          </form>
                           <form action={cancelScheduleAction}>
                             <input type="hidden" name="scheduleId" value={schedule.id} />
                             <input type="hidden" name="locationId" value={locationId} />

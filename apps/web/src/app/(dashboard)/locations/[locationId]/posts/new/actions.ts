@@ -378,3 +378,218 @@ export async function createManualPostAction(formData: FormData) {
     redirect(`/locations/${locationId || "unknown"}/posts/new?status=create_failed`);
   }
 }
+
+export async function createAndPublishNowAction(formData: FormData) {
+  try {
+    const { user, supabase } = await requireUser();
+
+    const locationIdRaw = formData.get("locationId");
+    const locationId = typeof locationIdRaw === "string" ? locationIdRaw.trim() : "";
+
+    if (!locationId) {
+      redirect("/content?status=missing_location");
+    }
+
+    const postTypeRaw = formData.get("postType");
+    const postType =
+      typeof postTypeRaw === "string" && POST_TYPES.has(postTypeRaw) ? postTypeRaw : "WHATS_NEW";
+
+    const titleRaw = formData.get("title");
+    const descriptionRaw = formData.get("description");
+    const ctaActionRaw = formData.get("ctaAction");
+    const ctaUrlRaw = formData.get("ctaUrl");
+    const imageDataRaw = formData.get("imageData");
+    const endDateRaw = formData.get("endDate");
+    const endTimeRaw = formData.get("endTime");
+    const couponCodeRaw = formData.get("couponCode");
+    const termsUrlRaw = formData.get("termsUrl");
+
+    const title = typeof titleRaw === "string" ? titleRaw.trim() : "";
+    const description = typeof descriptionRaw === "string" ? descriptionRaw.trim() : "";
+
+    console.log("[createAndPublishNowAction] Form data:", {
+      locationId,
+      postType,
+      title,
+      descriptionLength: description.length,
+      hasImageData: !!imageDataRaw,
+    });
+
+    // Title is only required for EVENT and OFFER posts
+    if ((postType === "EVENT" || postType === "OFFER") && !title) {
+      redirect(`/locations/${locationId}/posts/new?status=missing_fields`);
+    }
+
+    if (!description) {
+      redirect(`/locations/${locationId}/posts/new?status=missing_fields`);
+    }
+
+    const locationResult = await supabase
+      .from("gbp_locations")
+      .select("id, org_id, is_managed")
+      .eq("id", locationId)
+      .maybeSingle();
+
+    if (locationResult.error || !locationResult.data) {
+      redirect(`/locations/${locationId}?status=location_not_found`);
+    }
+
+    const location = locationResult.data as LocationRow;
+
+    if (!location.is_managed) {
+      redirect(`/locations/${locationId}?status=not_managed`);
+    }
+
+    await ensureMembership(location.org_id, user.id);
+
+    const images: string[] = [];
+    const imageData =
+      typeof imageDataRaw === "string" && imageDataRaw.trim().length > 0
+        ? imageDataRaw.trim()
+        : null;
+
+    if (imageData) {
+      const imageBytes = estimateBase64Bytes(imageData);
+
+      if (imageBytes > MAX_IMAGE_BYTES) {
+        redirect(`/locations/${locationId}/posts/new?status=image_too_large`);
+      }
+
+      images.push(imageData);
+    }
+
+    const ctaAction =
+      typeof ctaActionRaw === "string" && CTA_ACTIONS.has(ctaActionRaw) ? ctaActionRaw : null;
+    const ctaUrl =
+      typeof ctaUrlRaw === "string" && ctaUrlRaw.trim().length > 0 ? ctaUrlRaw.trim() : null;
+
+    if (ctaUrl && !isValidUrl(ctaUrl)) {
+      redirect(`/locations/${locationId}/posts/new?status=invalid_cta_url`);
+    }
+
+    const schema: Record<string, unknown> = {
+      type: postType,
+      description,
+      source: "manual",
+      createdAt: new Date().toISOString(),
+      authorId: user.id,
+    };
+
+    // Only include title for EVENT and OFFER posts
+    if (title && (postType === "EVENT" || postType === "OFFER")) {
+      schema.title = title;
+    }
+
+    // Add event-specific fields
+    if (postType === "EVENT" || postType === "OFFER") {
+      const endAtIso = createIsoFromDateTime(
+        typeof endDateRaw === "string" ? endDateRaw : null,
+        typeof endTimeRaw === "string" ? endTimeRaw : null,
+      );
+
+      if (endAtIso) {
+        schema.endDate = endAtIso;
+      }
+    }
+
+    // Add offer-specific fields
+    if (postType === "OFFER") {
+      const couponCode = typeof couponCodeRaw === "string" ? couponCodeRaw.trim() : "";
+      const termsUrl = typeof termsUrlRaw === "string" ? termsUrlRaw.trim() : "";
+
+      if (couponCode) {
+        schema.couponCode = couponCode;
+      }
+
+      if (termsUrl && isValidUrl(termsUrl)) {
+        schema.termsUrl = termsUrl;
+      }
+    }
+
+    if (ctaAction) {
+      (schema as { cta: { action: string; url: string | null } }).cta = {
+        action: ctaAction,
+        url: ctaUrl,
+      };
+    }
+
+    console.log("[createAndPublishNowAction] Inserting post candidate:", {
+      org_id: location.org_id,
+      location_id: location.id,
+      schema,
+      imagesCount: images.length,
+    });
+
+    const { data: postCandidate, error: insertCandidateError } = await getServiceRoleClient()
+      .from("post_candidates")
+      .insert({
+        org_id: location.org_id,
+        location_id: location.id,
+        schema: schema as Tables["post_candidates"]["Insert"]["schema"],
+        images,
+        status: "pending",
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (insertCandidateError || !postCandidate) {
+      console.error("Failed to create post candidate", insertCandidateError);
+      redirect(`/locations/${locationId}/posts/new?status=create_failed`);
+    }
+
+    // Schedule for immediate publish (NOW)
+    const publishNow = new Date().toISOString();
+
+    const { error: scheduleError } = await getServiceRoleClient()
+      .from("schedules")
+      .insert({
+        org_id: location.org_id,
+        location_id: location.id,
+        target_type: "post_candidate",
+        target_id: postCandidate.id,
+        publish_at: publishNow,
+        status: "pending",
+      });
+
+    if (scheduleError) {
+      console.error("Failed to schedule new post", scheduleError);
+      redirect(`/locations/${locationId}?status=schedule_failed`);
+    }
+
+    // Trigger the publish-posts edge function immediately
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+      if (supabaseUrl && serviceRoleKey) {
+        await fetch(`${supabaseUrl}/functions/v1/publish-posts`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${serviceRoleKey}`,
+            "Content-Type": "application/json",
+          },
+        });
+      }
+    } catch (error) {
+      console.error("[createAndPublishNowAction] Failed to trigger edge function", error);
+      // Don't fail the action - the scheduler will pick it up anyway
+    }
+
+    revalidatePath(`/locations/${locationId}`);
+    revalidatePath("/content");
+
+    redirect(`/locations/${locationId}?tab=posts&status=post_publishing_now`);
+  } catch (error) {
+    console.error("[createAndPublishNowAction] Error:", error);
+
+    // If it's a redirect, re-throw it
+    if (error && typeof error === "object" && "digest" in error) {
+      throw error;
+    }
+
+    // For other errors, redirect with error status
+    const locationIdRaw = formData.get("locationId");
+    const locationId = typeof locationIdRaw === "string" ? locationIdRaw.trim() : "";
+    redirect(`/locations/${locationId || "unknown"}/posts/new?status=create_failed`);
+  }
+}
