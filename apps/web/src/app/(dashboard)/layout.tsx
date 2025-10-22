@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { createServerComponentClientWithAuth } from "@/lib/supabase";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -15,14 +16,53 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect("/sign-in");
   }
 
-  // Fetch user's organizations
-  const { data: orgsData } = await db
-    .from("orgs")
-    .select("id, name")
-    .order("created_at", { ascending: true });
+  // Get selected orgId from cookie (set by middleware when user switches orgs)
+  const cookieStore = await cookies();
+  const selectedOrgId = cookieStore.get("selected-org-id")?.value;
 
-  const organizations = orgsData ?? [];
-  const currentOrgId = organizations[0]?.id ?? null;
+  // Fetch user's organizations (only orgs they are a member of)
+  const { data: membershipsData } = await db
+    .from("org_members")
+    .select("orgs(id, name, created_at)")
+    .eq("user_id", user.id);
+
+  type OrgWithCreatedAt = { id: string; name: string | null; created_at: string };
+  type MembershipWithOrg = { orgs: OrgWithCreatedAt | null };
+
+  const organizations = (membershipsData as MembershipWithOrg[] | null)
+    ?.map((m) => m.orgs)
+    .filter((org): org is OrgWithCreatedAt => org !== null)
+    .sort((a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    )
+    .map(({ id, name }) => ({ id, name })) ?? [];
+
+  // Determine current org:
+  // 1. Use cookie if valid
+  // 2. Otherwise, find first org with managed locations
+  // 3. Fallback to first org
+  let currentOrgId: string | null = null;
+
+  if (selectedOrgId && organizations.some((org) => org.id === selectedOrgId)) {
+    // Cookie exists and is valid
+    currentOrgId = selectedOrgId;
+  } else if (organizations.length > 0) {
+    // Find first org with managed locations
+    const { data: locationsData } = await db
+      .from("gbp_locations")
+      .select("org_id")
+      .in("org_id", organizations.map(o => o.id))
+      .eq("is_managed", true)
+      .limit(1);
+
+    if (locationsData && locationsData.length > 0) {
+      currentOrgId = locationsData[0].org_id;
+    } else {
+      // Fallback to first org
+      currentOrgId = organizations[0].id;
+    }
+  }
+
   const currentOrg = organizations.find((org) => org.id === currentOrgId) ?? null;
 
   return (
