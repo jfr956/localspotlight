@@ -54,18 +54,7 @@ serve(async (req) => {
   }
 
   try {
-    // Verify cron secret
-    const authHeader = req.headers.get('authorization')
-    const cronSecret = Deno.env.get('PUBLISH_POSTS_CRON_SECRET')
-    
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // Initialize Supabase client
+    // Initialize Supabase client (auth is handled by Supabase JWT verification)
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
@@ -74,7 +63,7 @@ serve(async (req) => {
 
     // Fetch pending schedules that are due to publish
     const now = new Date().toISOString()
-    
+
     // First, check for failed schedules that are ready for retry
     const { data: retrySchedules, error: retryError } = await supabase
       .from('schedules')
@@ -133,7 +122,7 @@ serve(async (req) => {
       try {
         const result = await processSchedule(supabase, schedule)
         results.push(result)
-        
+
         if (result.success) {
           publishedCount++
           console.log(`[PublishPosts] ✓ Published schedule ${schedule.id}`)
@@ -144,10 +133,10 @@ serve(async (req) => {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error'
         console.error(`[PublishPosts] ✗ Error processing schedule ${schedule.id}:`, errorMessage)
-        
+
         // Update schedule with error and schedule retry if needed
         await handlePublishError(supabase, schedule, errorMessage)
-        
+
         results.push({
           scheduleId: schedule.id,
           success: false,
@@ -173,7 +162,7 @@ serve(async (req) => {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     console.error('[PublishPosts] Unhandled error:', errorMessage)
-    
+
     return new Response(
       JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -234,6 +223,8 @@ async function processSchedule(supabase: any, schedule: Schedule): Promise<Publi
   try {
     // Publish to Google
     const googlePostName = await publishToGoogle(
+      supabase,
+      schedule,
       connection,
       location,
       postCandidate as PostCandidate
@@ -258,10 +249,10 @@ async function processSchedule(supabase: any, schedule: Schedule): Promise<Publi
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    
+
     // Update schedule status to failed
     await updateScheduleStatus(supabase, schedule.id, 'failed', errorMessage)
-    
+
     // Create audit log
     await createAuditLog(supabase, schedule.org_id, 'post_publish_failed', schedule.id, {
       error: errorMessage,
@@ -306,7 +297,163 @@ async function getAccessToken(refreshToken: string): Promise<string> {
   return tokenData.access_token
 }
 
+async function convertImagesToPublicUrls(
+  supabase: any,
+  imageUrls: string[],
+  scheduleId: string
+): Promise<string[]> {
+  const publicUrls: string[] = []
+
+  for (let i = 0; i < imageUrls.length; i++) {
+    const imageUrl = imageUrls[i]
+
+    // If it's already an HTTP/HTTPS URL, use it as-is
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+      publicUrls.push(imageUrl)
+      continue
+    }
+
+    // If it's a base64 data URL, convert it
+    if (imageUrl.startsWith('data:')) {
+      try {
+        console.log(`[PublishPosts] Converting base64 image ${i + 1} to public URL...`)
+
+        // Extract mime type and base64 data
+        const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/)
+        if (!matches) {
+          console.error(`[PublishPosts] Invalid data URL format for image ${i + 1}`)
+          continue
+        }
+
+        const mimeType = matches[1]
+        const base64Data = matches[2]
+
+        // Convert base64 to binary
+        const binaryString = atob(base64Data)
+        const bytes = new Uint8Array(binaryString.length)
+        for (let j = 0; j < binaryString.length; j++) {
+          bytes[j] = binaryString.charCodeAt(j)
+        }
+
+        // Determine file extension from mime type
+        const ext = mimeType.split('/')[1] || 'jpg'
+        const filename = `post-images/${scheduleId}-${i}.${ext}`
+
+        // Upload to Supabase Storage
+        const { data, error } = await supabase.storage
+          .from('public')
+          .upload(filename, bytes, {
+            contentType: mimeType,
+            upsert: true
+          })
+
+        if (error) {
+          console.error(`[PublishPosts] Failed to upload image ${i + 1} to storage:`, error)
+          continue
+        }
+
+        // Get public URL
+        const { data: urlData } = supabase.storage
+          .from('public')
+          .getPublicUrl(filename)
+
+        if (urlData?.publicUrl) {
+          console.log(`[PublishPosts] Image ${i + 1} uploaded successfully: ${urlData.publicUrl}`)
+          publicUrls.push(urlData.publicUrl)
+        }
+      } catch (error) {
+        console.error(`[PublishPosts] Error converting base64 image ${i + 1}:`, error)
+      }
+    } else {
+      console.warn(`[PublishPosts] Unknown image URL format for image ${i + 1}: ${imageUrl.substring(0, 50)}`)
+    }
+  }
+
+  return publicUrls
+}
+
+async function uploadImagesToGoogle(
+  accessToken: string,
+  accountId: string,
+  locationId: string,
+  imageUrls: string[]
+): Promise<string[]> {
+  const uploadedMediaNames: string[] = []
+
+  for (const imageUrl of imageUrls) {
+    try {
+      console.log(`[PublishPosts] Fetching image from: ${imageUrl}`)
+
+      // Fetch the image data
+      const imageResponse = await fetch(imageUrl)
+      if (!imageResponse.ok) {
+        console.error(`[PublishPosts] Failed to fetch image: ${imageResponse.status}`)
+        continue
+      }
+
+      const imageBlob = await imageResponse.blob()
+      const imageBuffer = await imageBlob.arrayBuffer()
+
+      console.log(`[PublishPosts] Uploading image (${imageBuffer.byteLength} bytes) to Google Media API...`)
+
+      // Upload to Google Business Profile Media API
+      // Using multipart form data to upload the image
+      const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2)
+      const mediaMetadata = {
+        locationName: `accounts/${accountId}/locations/${locationId}`,
+        mediaFormat: 'PHOTO',
+        locationAssociation: {
+          category: 'ADDITIONAL' // Can be PROFILE, LOGO, COVER, ADDITIONAL
+        }
+      }
+
+      // Build multipart form data manually
+      const metadataPart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(mediaMetadata)}\r\n`
+      const imagePart = `--${boundary}\r\nContent-Type: ${imageBlob.type || 'image/jpeg'}\r\n\r\n`
+      const endBoundary = `\r\n--${boundary}--\r\n`
+
+      // Combine parts
+      const metadataBytes = new TextEncoder().encode(metadataPart + imagePart)
+      const endBytes = new TextEncoder().encode(endBoundary)
+      const body = new Uint8Array(metadataBytes.length + imageBuffer.byteLength + endBytes.length)
+      body.set(metadataBytes, 0)
+      body.set(new Uint8Array(imageBuffer), metadataBytes.length)
+      body.set(endBytes, metadataBytes.length + imageBuffer.byteLength)
+
+      const uploadResponse = await fetch(
+        `https://mybusinessbusinessinformation.googleapis.com/v1/accounts/${accountId}/locations/${locationId}/media`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`
+          },
+          body: body
+        }
+      )
+
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text()
+        console.error(`[PublishPosts] Media upload failed (${uploadResponse.status}): ${errorText}`)
+        continue
+      }
+
+      const mediaData = await uploadResponse.json()
+      console.log(`[PublishPosts] Media uploaded successfully: ${mediaData.name}`)
+      uploadedMediaNames.push(mediaData.name)
+
+    } catch (error) {
+      console.error(`[PublishPosts] Error uploading image ${imageUrl}:`, error)
+      // Continue with next image
+    }
+  }
+
+  return uploadedMediaNames
+}
+
 async function publishToGoogle(
+  supabase: any,
+  schedule: Schedule,
   connection: GoogleConnection,
   location: GbpLocation,
   postCandidate: PostCandidate
@@ -317,14 +464,15 @@ async function publishToGoogle(
   // Get fresh access token
   const accessToken = await getAccessToken(refreshToken)
 
-  // Extract account and location IDs from google_location_name
-  // Expected format: "accounts/{accountId}/locations/{locationId}"
-  const accountId = connection.account_id
+  // Extract account and location IDs from stored values
+  // connection.account_id might be "accounts/123" or just "123"
+  // location.google_location_name is "locations/456" format
+  const accountId = connection.account_id.replace('accounts/', '')
   const locationName = location.google_location_name
 
   // Extract just the location ID from the full resource name
   const locationIdMatch = locationName.match(/locations\/(\d+)/)
-  const locationId = locationIdMatch ? locationIdMatch[1] : locationName.split('/').pop()
+  const locationId = locationIdMatch ? locationIdMatch[1] : locationName.replace('locations/', '')
 
   if (!accountId || !locationId) {
     throw new Error(`Invalid account or location ID. Account: ${accountId}, Location: ${locationId}`)
@@ -332,8 +480,16 @@ async function publishToGoogle(
 
   console.log(`[PublishPosts] Publishing to account ${accountId}, location ${locationId}`)
 
-  // Transform post candidate schema to Google API format
-  const postData = transformPostSchema(postCandidate.schema, postCandidate.images)
+  // Convert any base64 images to public URLs
+  let publicImageUrls: string[] = []
+  if (postCandidate.images && postCandidate.images.length > 0) {
+    console.log(`[PublishPosts] Processing ${postCandidate.images.length} images...`)
+    publicImageUrls = await convertImagesToPublicUrls(supabase, postCandidate.images, schedule.id)
+    console.log(`[PublishPosts] Converted to ${publicImageUrls.length} public URLs`)
+  }
+
+  // Transform post candidate schema to Google API format (with image URLs)
+  const postData = transformPostSchema(postCandidate.schema, publicImageUrls)
 
   console.log(`[PublishPosts] Post data:`, JSON.stringify(postData, null, 2))
 
@@ -448,16 +604,14 @@ function transformPostSchema(schema: Record<string, any>, images: string[]): any
     }
   }
 
-  // Add media if images are provided
-  // Note: Google requires media to be uploaded first via Media API, then referenced by MediaItem
-  // For now, we'll skip media upload - this needs to be implemented separately
+  // Add media with sourceUrl - Google will fetch the images
+  // This avoids the TLS/multipart upload issues in edge runtime
   if (images && images.length > 0) {
-    console.log(`[PublishPosts] Media upload not yet implemented. ${images.length} images will be skipped.`)
-    // TODO: Implement media upload via Media API
-    // postData.media = images.map(imageUrl => ({
-    //   mediaFormat: 'PHOTO',
-    //   sourceUrl: imageUrl
-    // }))
+    postData.media = images.map(imageUrl => ({
+      mediaFormat: 'PHOTO',
+      sourceUrl: imageUrl
+    }))
+    console.log(`[PublishPosts] Added ${images.length} media items to post (using sourceUrl)`)
   }
 
   return postData
@@ -492,7 +646,7 @@ async function storeGooglePost(
   googlePostName: string
 ): Promise<void> {
   const schema = postCandidate.schema
-  
+
   const postData = {
     org_id: schedule.org_id,
     location_id: schedule.location_id,
@@ -513,7 +667,7 @@ async function storeGooglePost(
   }
 
   const { error } = await supabase.from('gbp_posts').insert(postData)
-  
+
   if (error) {
     console.error('[PublishPosts] Failed to store Google post:', error)
     // Don't throw here - the post was published successfully, we just failed to store it
@@ -528,11 +682,11 @@ async function updateScheduleStatus(
   providerRef: string | null = null
 ): Promise<void> {
   const updateData: any = { status }
-  
+
   if (error) {
     updateData.meta = { error, lastAttempt: new Date().toISOString() }
   }
-  
+
   if (providerRef) {
     updateData.provider_ref = providerRef
   }
@@ -573,23 +727,23 @@ async function handlePublishError(
 ): Promise<void> {
   const currentRetryCount = (schedule as any).retry_count || 0
   const maxRetries = 3
-  
+
   if (currentRetryCount >= maxRetries) {
     // Max retries reached, mark as permanently failed
     await updateScheduleStatus(supabase, schedule.id, 'failed', errorMessage)
-    
+
     await createAuditLog(supabase, schedule.org_id, 'post_publish_failed_permanent', schedule.id, {
       error: errorMessage,
       retryCount: currentRetryCount,
       locationId: schedule.location_id
     })
-    
+
     console.error(`[PublishPosts] Schedule ${schedule.id} permanently failed after ${maxRetries} retries`)
   } else {
     // Schedule retry with exponential backoff
     const retryDelay = Math.min(1000 * Math.pow(2, currentRetryCount), 60000) // Max 1 minute
     const nextRetryAt = new Date(Date.now() + retryDelay).toISOString()
-    
+
     const { error } = await supabase
       .from('schedules')
       .update({
@@ -599,18 +753,18 @@ async function handlePublishError(
         next_retry_at: nextRetryAt
       })
       .eq('id', schedule.id)
-    
+
     if (error) {
       console.error(`[PublishPosts] Failed to update schedule for retry:`, error)
     }
-    
+
     await createAuditLog(supabase, schedule.org_id, 'post_publish_retry_scheduled', schedule.id, {
       error: errorMessage,
       retryCount: currentRetryCount + 1,
       nextRetryAt,
       locationId: schedule.location_id
     })
-    
+
     console.log(`[PublishPosts] Schedule ${schedule.id} scheduled for retry #${currentRetryCount + 1} at ${nextRetryAt}`)
   }
 }

@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { createServerComponentClientWithAuth } from "@/lib/supabase";
 import type { Tables } from "@/types/database";
 import Link from "next/link";
-import { cancelScheduleAction } from "./actions";
+import { cancelScheduleAction, publishNowAction } from "./actions";
 
 type Review = Tables<"gbp_reviews">;
 type Schedule = Tables<"schedules">;
@@ -52,6 +52,11 @@ const STATUS_ALERTS: Record<
     tone: "success",
     title: "Schedule cancelled",
     description: "The scheduled post has been removed from the queue.",
+  },
+  publishing_now: {
+    tone: "success",
+    title: "Publishing now",
+    description: "The post is being published immediately to Google Business Profile.",
   },
   cancel_failed: {
     tone: "error",
@@ -680,15 +685,26 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
                 {recentSchedules.length > 0 && (
                   <div className="text-sm text-slate-400">{schedulesCount} total</div>
                 )}
-                <Link
-                  href={`/locations/${locationId}/posts/new?mode=ai`}
-                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/10"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 15h16M10 19l4-4-4-4" />
-                  </svg>
-                  Generate with AI
-                </Link>
+                <div className="flex gap-2">
+                  <Link
+                    href={`/locations/${locationId}/posts/new`}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-1.5 text-sm font-medium text-slate-300 transition hover:bg-slate-800 hover:border-slate-500"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Create Post
+                  </Link>
+                  <Link
+                    href={`/locations/${locationId}/posts/new?mode=ai`}
+                    className="inline-flex items-center gap-2 rounded-lg border border-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/10"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 15h16M10 19l4-4-4-4" />
+                    </svg>
+                    Generate with AI
+                  </Link>
+                </div>
               </div>
             </div>
 
@@ -824,6 +840,20 @@ export default async function LocationDetailPage({ params, searchParams }: Locat
                               Edit
                             </Link>
                           )}
+                          <form action={publishNowAction}>
+                            <input type="hidden" name="scheduleId" value={schedule.id} />
+                            <input type="hidden" name="locationId" value={locationId} />
+                            <button
+                              type="submit"
+                              className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 px-3 py-1.5 text-xs font-medium text-emerald-400 transition hover:bg-emerald-500/10"
+                            >
+                              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              Publish Now
+                            </button>
+                          </form>
                           <form action={cancelScheduleAction}>
                             <input type="hidden" name="scheduleId" value={schedule.id} />
                             <input type="hidden" name="locationId" value={locationId} />
